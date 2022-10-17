@@ -1,0 +1,21 @@
+Stat	mikado_all.loci
+Number of genes	20460.00
+Number of Transcripts	47081.00
+Transcripts per gene	2.30
+Number of monoexonic genes	1260.00
+Monoexonic transcripts	1482.00
+Transcript mean size cDNA (bp)	2019.31
+Transcript median size cDNA (bp)	1772.00
+Min cDNA	200.00
+Max cDNA	18851.00
+Total exons	288473.00
+Exons per transcript	6.13
+Exon mean size (bp)	329.57
+CDS mean size (bp)	215.69
+Transcript mean size CDS (bp)	1181.40
+Transcript median size CDS (bp)	882.00
+Min CDS	0.00
+Max CDS	18360.00
+Intron mean size (bp)	575.11
+5'UTR mean size (bp)	359.99
+3'UTR mean size (bp)	468.85
