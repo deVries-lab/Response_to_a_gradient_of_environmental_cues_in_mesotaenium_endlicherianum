@@ -1,0 +1,9 @@
+Azolla_filiculoides.protein.highconfidence_v1.1.fasta
+Chabra1_GeneCatalog_proteins_20200807.aa.fasta
+Chlat1_GeneCatalog_proteins_20200803.aa.fasta
+Creinhardtii_236_protein.fa
+Klenit1_GeneCatalog_proteins_20200807.aa.fasta
+Mesvir1_GeneCatalog_proteins_20200803.aa.fasta
+MpTak_v6.1r1.protein.fasta
+Selmo1_GeneModels_FilteredModels3_aa.fasta
+Spirogloea_muscicola_gene.fa

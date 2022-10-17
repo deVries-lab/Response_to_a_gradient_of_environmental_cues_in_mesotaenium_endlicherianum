@@ -1,0 +1,27 @@
+{
+	"ei_homology.CombineXspecies.runtime_attr_override": {
+		"cpu_cores": 20,
+		"mem_gb": 64,
+		"max_retries": 2
+	},
+	"ei_homology.aln_attr": {
+		"cpu_cores": 24,
+		"mem_gb": 32,
+		"max_retries": 2
+	},
+	"ei_homology.index_attr": {
+		"cpu_cores": 16,
+		"mem_gb": 20,
+		"max_retries": 2
+	},
+	"ei_homology.mikado_attr": {
+		"cpu_cores": 30,
+		"mem_gb": 250,
+		"max_retries": 2
+	},
+	"ei_homology.score_attr": {
+		"cpu_cores": 16,
+		"mem_gb": 120,
+		"max_retries": 2
+	}
+}

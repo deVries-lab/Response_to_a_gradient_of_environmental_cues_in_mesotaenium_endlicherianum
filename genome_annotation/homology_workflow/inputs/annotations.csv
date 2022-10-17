@@ -1,0 +1,7 @@
+/home/armin/projects/meso_genome_annotation/homology_workflow/inputs/annotations/AagrOXF_genome.fasta,/home/armin/projects/meso_genome_annotation/homology_workflow/inputs/annotations/AagrOXF_genome.gff
+/home/armin/projects/meso_genome_annotation/homology_workflow/inputs/annotations/Athaliana_447_TAIR10.fa,/home/armin/projects/meso_genome_annotation/homology_workflow/inputs/annotations/Athaliana_447_Araport11.gene.gff3
+/home/armin/projects/meso_genome_annotation/homology_workflow/inputs/annotations/Chabra1_AssemblyScaffolds_Repeatmasked.fasta,/home/armin/projects/meso_genome_annotation/homology_workflow/inputs/annotations/Chabra1_GeneCatalog_genes_20200807.gff3
+/home/armin/projects/meso_genome_annotation/homology_workflow/inputs/annotations/Mesvir1_AssemblyScaffolds_Repeatmasked.fasta,/home/armin/projects/meso_genome_annotation/homology_workflow/inputs/annotations/Mesvir1_GeneCatalog_genes_20200803.gff3
+/home/armin/projects/meso_genome_annotation/homology_workflow/inputs/annotations/Penium_scaffold.fa,/home/armin/projects/meso_genome_annotation/homology_workflow/inputs/annotations/Penium_hc_gene.gff
+/home/armin/projects/meso_genome_annotation/homology_workflow/inputs/annotations/Ppatens_318_v3.hardmasked.fa,/home/armin/projects/meso_genome_annotation/homology_workflow/inputs/annotations/Ppatens_318_v3.3.gene.gff3
+/home/armin/projects/meso_genome_annotation/homology_workflow/inputs/annotations/Spirogloea_muscicula_genome.fa,/home/armin/projects/meso_genome_annotation/homology_workflow/inputs/annotations/Spirogloea_muscicola_gene.gff
