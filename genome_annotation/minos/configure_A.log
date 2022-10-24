@@ -1,0 +1,10 @@
+Starting MINOS V 1.8.0
+
+Runmode is configure
+Configuring run...
+Namespace(annotation_version='v2', blastmode='blastp', busco_genome_run='/data/armin/meso_genome_annotation/minos/inputs/m_endlicherianum_genome', busco_level='proteins', busco_lineage='/data/armin/meso_genome_annotation/minos/busco_downloads/lineages/viridiplantae_odb10', busco_scoring=None, codon_table=1, config_file='/home/armin/miniconda3/envs/minos/lib/python3.7/site-packages/minos/etc/minos_config.yaml', dryrun=False, external='inputs/external_plants.yaml', external_metrics='inputs/external_metrics_A.txt', force_reconfiguration=True, genus_identifier='Me1', hpc_config='/home/armin/miniconda3/envs/minos/lib/python3.7/site-packages/minos/etc/hpc_config.json', list_file='inputs/list_models.txt', max_cores=200, max_nodes=100, mikado_container='containers/mikado.img', no_drmaa=True, outdir='run_A', partition=None, prefix='minos_run', reference='inputs/Mesotaenium_endlicherianum_genome.fa', runmode='configure', scheduler='None', scoring_template='inputs/scoring_template.yaml', unlock=False, use_diamond=True, use_tpm_for_picking=True)
+Generating scoring file run_A/minos_run.scoring.yaml ... done.
+Generating run configuration file ... done.
+Running mikado configure with:
+singularity exec /data/armin/meso_genome_annotation/minos/containers/mikado.img  mikado configure --codon-table 0 --list inputs/list_models.txt  --external inputs/external_plants.yaml  -od run_A --reference inputs/Mesotaenium_endlicherianum_genome.fa --scoring run_A/minos_run.scoring.yaml  --junctions inputs/junction/portcullis.pass.merged.bed run_A/minos_run.mikado_config.yaml --full
+b''
