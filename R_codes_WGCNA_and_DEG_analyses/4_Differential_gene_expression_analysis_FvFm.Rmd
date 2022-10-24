@@ -1,0 +1,705 @@
+---
+title: "<center> Response to a gradient of environmental cues in mesotaenium endlicherianum<center>"
+author: "<center> Armin Dadras <center><br>"
+date: "<center> _`r Sys.Date()`_ <center>"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    theme: yeti
+    highlight: tango
+    toc: yes
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    number_sections: true
+  pdf_document:
+    fig_caption: yes
+    toc: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(rmarkdown)
+library(tinytex)
+library(knitr)
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+```
+
+------------------------------------------------------------------------
+
+# Importing data into R
+
+After read mapping with HISAT2, [TxImport](https://bioconductor.org/packages/release/bioc/html/tximport.html) was used to read Stringtie outputs into the R environment. Annotation data was used to summarize data from transcript-level to gene-level.
+
+```{r Step 1: Importing count data into R}
+library(tidyverse) # provides access to Hadley Wickham's collection of R packages for data science
+library(tximport)
+library(edgeR)
+library(matrixStats)
+library(cowplot)
+library(rhdf5)
+
+targets <- read.csv("study_design.csv", header = T)
+
+## Determine samples I am interested in
+#targets <- targets %>%
+#    filter(targets$condition_not_to_use %in% (c("standard_growth", "heat")))
+
+sampleLabels <- targets$sample_name
+path <- file.path("kallisto",paste0(targets$sample_id), "abundance.h5") 
+#check if files exist for all samples in study design file
+Tx <- read_tsv("tx2gene.tsv")
+
+Txi_gene <- tximport(path,
+         type = "kallisto",
+         countsFromAbundance = "lengthScaledTPM",
+         tx2gene = Tx,
+         txOut = F,
+         ignoreTxVersion = F)
+```
+
+------------------------------------------------------------------------
+
+# Preprocessing
+
+## Impact of filtering and normalization
+
+The abundance data are TPM, while the counts are read counts mapping to each gene or transcript.
+
+```{r Step 2: Impact of filtering and normalization}
+myDGEList <- DGEList(Txi_gene$counts) # Make a DGElist from the counts
+log2.cpm <- cpm(myDGEList, log=TRUE) # use the 'cpm' function from EdgeR to get counts per million
+log2.cpm.df <- as_tibble(log2.cpm, rownames = "geneID")
+colnames(log2.cpm.df) <- c("geneID", sampleLabels)
+log2.cpm.df.pivot <- pivot_longer(log2.cpm.df, # dataframe to be pivoted
+                                  cols = 2:(length(sampleLabels)+1), # column names to be stored as a SINGLE variable
+                                  names_to = "samples", # name of that new variable (column)
+                                  values_to = "expression") # name of new variable (column) storing all the values (data)
+
+p1 <- ggplot(log2.cpm.df.pivot) +
+  aes(x=samples, y=expression, fill=samples) +
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun = "median",
+               geom = "point",
+               shape = 95,
+               size = 10,
+               color = "black",
+               show.legend = FALSE) +
+  labs(y="log2 expression", x = "sample",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="unfiltered, non-normalized",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90),
+        plot.title = element_text(size = 8),
+        plot.subtitle = element_text(size = 6))
+
+# Filter myDGEList
+cpm <- cpm(myDGEList)
+# The line below is important! This is where the filtering starts
+keepers <- rowSums(cpm>1)>=3 #user defined
+myDGEList.filtered <- myDGEList[keepers,]
+
+log2.cpm.filtered <- cpm(myDGEList.filtered, log=TRUE)
+log2.cpm.filtered.df <- as_tibble(log2.cpm.filtered, rownames = "geneID")
+colnames(log2.cpm.filtered.df) <- c("geneID", sampleLabels)
+log2.cpm.filtered.df.pivot <- pivot_longer(log2.cpm.filtered.df, # dataframe to be pivoted
+                                           cols = 2:(length(sampleLabels)+1), # column names to be stored as a SINGLE variable
+                                           names_to = "samples", # name of that new variable (column)
+                                           values_to = "expression") # name of new variable (column) storing all the values (data)
+
+p2 <- ggplot(log2.cpm.filtered.df.pivot) +
+  aes(x=samples, y=expression, fill=samples) +
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun = "median",
+               geom = "point",
+               shape = 95,
+               size = 10,
+               color = "black",
+               show.legend = FALSE) +
+  labs(y="log2 expression", x = "sample",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="filtered, non-normalized",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90),
+        plot.title = element_text(size = 8),
+        plot.subtitle = element_text(size = 6))
+
+# Normalize the data
+myDGEList.filtered.norm <- calcNormFactors(myDGEList.filtered, method = "TMM")
+log2.cpm.filtered.norm <- cpm(myDGEList.filtered.norm, log=TRUE)
+log2.cpm.filtered.norm.df <- as_tibble(log2.cpm.filtered.norm, rownames = "geneID")
+colnames(log2.cpm.filtered.norm.df) <- c("geneID", sampleLabels)
+log2.cpm.filtered.norm.df.pivot <- pivot_longer(log2.cpm.filtered.norm.df, # dataframe to be pivoted
+                                                cols = 2:(length(sampleLabels)+1), # column names to be stored as a SINGLE variable
+                                                names_to = "samples", # name of that new variable (column)
+                                                values_to = "expression") # name of new variable (column) storing all the values (data)
+
+p3 <- ggplot(log2.cpm.filtered.norm.df.pivot) +
+  aes(x=samples, y=expression, fill=samples) +
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun = "median",
+               geom = "point",
+               shape = 95,
+               size = 10,
+               color = "black",
+               show.legend = FALSE) +
+  labs(y="log2 expression", x = "sample",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="filtered, TMM normalized",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90),
+        plot.title = element_text(size = 8),
+        plot.subtitle = element_text(size = 6))
+
+ggsave(filename = "plots/impact_of_filtering_and_normalization.pdf", plot_grid(p1, p2, p3, labels = c('A', 'B', 'C'), label_size = 12, ncol = 3, align = "hv"), width = 20, height = 20)
+plot_grid(p1, p2, p3, labels = c('A', 'B', 'C'), label_size = 12, ncol = 3, align = "hv")
+
+```
+
+------------------------------------------------------------------------
+
+Filtering was carried out to remove lowly expressed genes. Genes with less than 1 count per million (CPM) in at least 3 or more samples filtered out. This reduced the number of genes from `r nrow(myDGEList)` to `r nrow(myDGEList.filtered.norm)`.
+
+------------------------------------------------------------------------
+
+## Table of filtered and normalized data
+
+The table that includes expression data for `r nrow(myDGEList.filtered.norm)` genes are saved in`tables/heat/filtered_and_TMM_normalized_counts.tsv`.
+
+------------------------------------------------------------------------
+
+```{r Step 3: Table of filtered and normalized data}
+mydata.df <- log2.cpm.filtered.norm.df %>%
+  mutate_if(is.numeric, round, 2)
+
+write_tsv(mydata.df, "tables/filtered_and_TMM_normalized_counts.tsv")
+```
+
+------------------------------------------------------------------------
+
+# Model the mean-variance relationship
+
+```{r Step 5.1: Model the mean-variance relationship}
+library(limma)
+library(gt)
+library(DT)
+library(plotly)
+
+group <- targets$FvFM_1
+group <- factor(group)
+group <- relevel(group, ref = "Control")
+
+design <- model.matrix(~0 + group)
+colnames(design) <- c(levels(group))
+colnames(myDGEList.filtered.norm) <- sampleLabels
+
+# Use VOOM function from Limma package to model the mean-variance relationship
+v.DEGList.filtered.norm <- voom(myDGEList.filtered.norm, design,
+                                plot = TRUE)
+v.DEGList.filtered.norm_E.df <- as_tibble(v.DEGList.filtered.norm$E,
+                                          rownames = "geneID")
+
+corfit <- duplicateCorrelation(v.DEGList.filtered.norm, ndups = 1, block = targets$biolrep)
+
+
+fit <- lmFit(v.DEGList.filtered.norm, design, block = targets$biolrep, cor = corfit$consensus)
+
+
+contrast.matrix <- makeContrasts(TvsC = Treatment-Control,
+                                 levels=design)
+
+fits <- contrasts.fit(fit, contrast.matrix)
+ebFit <- eBayes(fits)
+
+myTopHits <- topTable(ebFit, adjust ="BH", coef=1, number=40000, sort.by="logFC")
+myTopHits.df <- myTopHits %>%
+  as_tibble(rownames = "geneID")
+
+
+results <- decideTests(ebFit, method="global", adjust.method="BH", p.value=0.01, lfc=1)
+colnames(v.DEGList.filtered.norm$E) <- sampleLabels
+
+diffGenes <- v.DEGList.filtered.norm$E[results[,1] !=0, ]
+
+
+diffGenes.df <- as_tibble(diffGenes, rownames = "geneID")
+
+write_tsv(diffGenes.df, "tables/expression_of_DEGs_FvFm.tsv")
+
+
+library(tidyverse)
+library(gplots)
+library(RColorBrewer)
+library(pheatmap)
+myheatcolors <- rev(brewer.pal(name="RdBu", n=11))
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/FvFm.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+pheatmap(as.matrix(diffGenes.df[,-1]),
+        na.rm = F,
+        na_col = "black",
+        cluster_cols = T, cluster_rows = T,
+        color=myheatcolors, scale='row', labRow=NA,
+        cexRow=1, cexCol=1, margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+```{r volcano plot}
+# Volcano Plots ----
+# in topTable function above, set 'number=40000' to capture all genes
+
+# now plot
+p1 <- ggplot(myTopHits.df) +
+  aes(y=-log10(adj.P.Val), x=logFC, text = paste("Symbol:", geneID)) +
+  geom_point(size=2) +
+  geom_hline(yintercept = -log10(0.01), linetype="longdash", colour="grey", size=1) +
+  geom_vline(xintercept = 1, linetype="longdash", colour="#BE684D", size=1) +
+  geom_vline(xintercept = -1, linetype="longdash", colour="#2C467A", size=1) +
+  annotate("rect", xmin = 1, xmax = 15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#7bdff2") +
+  annotate("rect", xmin = -1, xmax = -15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#f2b5d4") +
+  labs(title="Volcano plot",
+       subtitle = "FvFm treatment vs. FvFm control",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()
+
+
+ggsave(filename = "plots/volcano_plots_FvFM.pdf", plot_grid(p1), width = 20, height = 20)
+plot_grid(p1)
+```
+
+
+```{r DEGs FvFm}
+myheatcolors <- rev(brewer.pal(name="RdBu", n=10))
+clustRows <- hclust(as.dist(1-cor(t(diffGenes), method="pearson")), method="complete") #cluster rows by pearson correlation
+clustColumns <- hclust(as.dist(1-cor(diffGenes, method="spearman")), method="complete")
+module.assign <- cutree(clustRows, k=2)
+module.color <- rainbow(length(unique(module.assign)), start=0.1, end=0.9) 
+module.color <- module.color[as.vector(module.assign)]
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/FvFm.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(diffGenes, 
+          Rowv=as.dendrogram(clustRows), 
+          Colv=as.dendrogram(clustColumns),
+          RowSideColors=module.color,
+          col=myheatcolors, scale='row', labRow=NA,
+          density.info="none", trace="none",  
+          cexRow=1, cexCol=1, margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 2 
+myModule_2 <- diffGenes[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_2 <- hclust(as.dist(1-cor(t(myModule_2), method="pearson")), method="complete")
+clustColumns <- hclust(as.dist(1-cor(myModule_2, method="spearman")), method="complete")
+myModule_2.df <- as_tibble(myModule_2, rownames = "geneID")
+write_tsv(myModule_2.df, "tables/FvFm/module_2_genes.tsv")
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/FvFm/module_2.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(myModule_2, 
+          Rowv=as.dendrogram(hrsub_2), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 1 
+myModule_1 <- diffGenes[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_1 <- hclust(as.dist(1-cor(t(myModule_1), method="pearson")), method="complete")
+clustColumns <- hclust(as.dist(1-cor(myModule_1, method="spearman")), method="complete")
+myModule_1.df <- as_tibble(myModule_1, rownames = "geneID")
+write_tsv(myModule_1.df, "tables/FvFm/module_1_genes.tsv")
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/FvFm/module1.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+
+heatmap.2(myModule_1, 
+          Rowv=as.dendrogram(hrsub_1), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+```{r Step 6: Enrichment FvFm}
+library(clusterProfiler)
+library(enrichplot)
+library(tidyverse)
+
+term2gene <- read.csv2("term2gene_GO.csv")
+term2gene <- term2gene[,-1] # remove the first index row
+term2name <- read.csv2("term2name_GO.csv")
+term2name <- term2name[,-1] # remove the first index row
+
+my_universe <- term2gene[term2gene$gene %in% v.DEGList.filtered.norm_E.df$geneID,]
+
+## Up regulated
+enrichment <- enricher(rownames(myModule_2),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/FvFm/module2_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/FvFm/module2_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/FvFm/module2_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+
+## Down regulated
+enrichment <- enricher(rownames(myModule_1),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/FvFm/module1_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/FvFm/module1_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/FvFm/module1_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+```
+
+# Model the mean-variance relationship
+
+```{r Step 5.1: Model the mean-variance relationship 2}
+library(limma)
+library(gt)
+library(DT)
+library(plotly)
+
+targets <- targets %>%
+    mutate(FvFm_2 = ifelse(FvFm_measure >= 0.5, "Control", "Treatment"))
+
+group <- targets$FvFm_2
+group <- factor(group)
+group <- relevel(group, ref = "Control")
+
+design <- model.matrix(~0 + group)
+colnames(design) <- c(levels(group))
+colnames(myDGEList.filtered.norm) <- sampleLabels
+
+# Use VOOM function from Limma package to model the mean-variance relationship
+v.DEGList.filtered.norm <- voom(myDGEList.filtered.norm, design,
+                                plot = TRUE)
+v.DEGList.filtered.norm_E.df <- as_tibble(v.DEGList.filtered.norm$E,
+                                          rownames = "geneID")
+
+corfit <- duplicateCorrelation(v.DEGList.filtered.norm, ndups = 1, block = targets$biolrep)
+
+
+fit <- lmFit(v.DEGList.filtered.norm, design, block = targets$biolrep, cor = corfit$consensus)
+
+
+contrast.matrix <- makeContrasts(TvsC = Treatment-Control,
+                                 levels=design)
+
+fits <- contrasts.fit(fit, contrast.matrix)
+ebFit <- eBayes(fits)
+
+myTopHits <- topTable(ebFit, adjust ="BH", coef=1, number=40000, sort.by="logFC")
+myTopHits.df <- myTopHits %>%
+  as_tibble(rownames = "geneID")
+
+
+results <- decideTests(ebFit, method="global", adjust.method="BH", p.value=0.01, lfc=1)
+colnames(v.DEGList.filtered.norm$E) <- sampleLabels
+
+diffGenes <- v.DEGList.filtered.norm$E[results[,1] !=0, ]
+
+
+diffGenes.df <- as_tibble(diffGenes, rownames = "geneID")
+
+write_tsv(diffGenes.df, "tables/expression_of_DEGs_FvFm_2.tsv")
+
+
+library(tidyverse)
+library(gplots)
+library(RColorBrewer)
+library(pheatmap)
+myheatcolors <- rev(brewer.pal(name="RdBu", n=11))
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/FvFm_2.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+pheatmap(as.matrix(diffGenes.df[,-1]),
+        na.rm = F,
+        na_col = "black",
+        cluster_cols = T, cluster_rows = T,
+        color=myheatcolors, scale='row', labRow=NA,
+        cexRow=1, cexCol=1, margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+```{r volcano plot}
+# Volcano Plots ----
+# in topTable function above, set 'number=40000' to capture all genes
+
+# now plot
+p1 <- ggplot(myTopHits.df) +
+  aes(y=-log10(adj.P.Val), x=logFC, text = paste("Symbol:", geneID)) +
+  geom_point(size=2) +
+  geom_hline(yintercept = -log10(0.01), linetype="longdash", colour="grey", size=1) +
+  geom_vline(xintercept = 1, linetype="longdash", colour="#BE684D", size=1) +
+  geom_vline(xintercept = -1, linetype="longdash", colour="#2C467A", size=1) +
+  annotate("rect", xmin = 1, xmax = 15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#7bdff2") +
+  annotate("rect", xmin = -1, xmax = -15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#f2b5d4") +
+  labs(title="Volcano plot",
+       subtitle = "FvFm treatment vs. FvFm control",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()
+
+
+ggsave(filename = "plots/volcano_plots_FvFM_2.pdf", plot_grid(p1), width = 20, height = 20)
+plot_grid(p1)
+```
+
+
+```{r DEGs FvFm}
+myheatcolors <- rev(brewer.pal(name="RdBu", n=10))
+clustRows <- hclust(as.dist(1-cor(t(diffGenes), method="pearson")), method="complete") #cluster rows by pearson correlation
+clustColumns <- hclust(as.dist(1-cor(diffGenes, method="spearman")), method="complete")
+module.assign <- cutree(clustRows, k=2)
+module.color <- rainbow(length(unique(module.assign)), start=0.1, end=0.9) 
+module.color <- module.color[as.vector(module.assign)]
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/FvFm_2.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(diffGenes, 
+          Rowv=as.dendrogram(clustRows), 
+          Colv=as.dendrogram(clustColumns),
+          RowSideColors=module.color,
+          col=myheatcolors, scale='row', labRow=NA,
+          density.info="none", trace="none",  
+          cexRow=1, cexCol=1, margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 2 
+myModule_2 <- diffGenes[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_2 <- hclust(as.dist(1-cor(t(myModule_2), method="pearson")), method="complete")
+clustColumns <- hclust(as.dist(1-cor(myModule_2, method="spearman")), method="complete")
+myModule_2.df <- as_tibble(myModule_2, rownames = "geneID")
+write_tsv(myModule_2.df, "tables/FvFm_2/module_2_genes.tsv")
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/FvFm_2/module_2.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(myModule_2, 
+          Rowv=as.dendrogram(hrsub_2), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 1 
+myModule_1 <- diffGenes[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_1 <- hclust(as.dist(1-cor(t(myModule_1), method="pearson")), method="complete")
+clustColumns <- hclust(as.dist(1-cor(myModule_1, method="spearman")), method="complete")
+myModule_1.df <- as_tibble(myModule_1, rownames = "geneID")
+write_tsv(myModule_1.df, "tables/FvFm_2/module_1_genes.tsv")
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/FvFm_2/module1.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+
+heatmap.2(myModule_1, 
+          Rowv=as.dendrogram(hrsub_1), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+```{r Step 6: Enrichment FvFm}
+library(clusterProfiler)
+library(enrichplot)
+library(tidyverse)
+
+term2gene <- read.csv2("term2gene_GO.csv")
+term2gene <- term2gene[,-1] # remove the first index row
+term2name <- read.csv2("term2name_GO.csv")
+term2name <- term2name[,-1] # remove the first index row
+
+my_universe <- term2gene[term2gene$gene %in% v.DEGList.filtered.norm_E.df$geneID,]
+
+## Up regulated
+enrichment <- enricher(rownames(myModule_2),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/FvFm_2/module2_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/FvFm_2/module2_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/FvFm_2/module2_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+
+## Down regulated
+enrichment <- enricher(rownames(myModule_1),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/FvFm_2/module1_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/FvFm_2/module1_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/FvFm_2/module1_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+```
+
+
+# Session info
+
+The output from running 'sessionInfo' is shown below and details all packages and version necessary to reproduce the results in this report.
+
+```{r session info}
+sessionInfo()
+```

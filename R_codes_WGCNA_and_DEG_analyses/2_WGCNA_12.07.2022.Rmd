@@ -1,0 +1,2527 @@
+---
+title: "<center> Response to a gradient of environmental cues in mesotaenium endlicherianum - WGCNA<center>"
+author: "<center> Armin Dadras <center><br>"
+date: "<center> _`r Sys.Date()`_ <center>"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    theme: yeti
+    highlight: tango
+    toc: yes
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    number_sections: true
+  pdf_document:
+    fig_caption: yes
+    toc: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(rmarkdown)
+library(tinytex)
+library(knitr)
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+```
+
+------------------------------------------------------------------------
+
+# Importing and cleaning the expression data into R
+First, we imported the normalized expression data. This is the object produced by voom function in analysis 1. We mostly follows the instructions of WGCNA package in this file.
+
+```{r Step 1: Importing normalized expression data into R}
+library(WGCNA)
+library(tidyverse)
+
+allowWGCNAThreads()
+
+load("log2_expression_voom.RData")
+targets <- read.csv("study_design.csv", header = T)
+datExpr <- as.data.frame(v.DEGList.filtered.norm$E)
+colnames(datExpr) <- paste("LI.",
+                           targets$light_intensity_group,
+                           ".T:",
+                           targets$temperature_group,
+                           ".r",
+                           targets$replicate, sep = "")
+datExpr <- t(datExpr)
+gsg = goodSamplesGenes(datExpr, verbose = 3);
+gsg$allOK
+if (!gsg$allOK)
+{
+  # Optionally, print the gene and sample names that were removed:
+  if (sum(!gsg$goodGenes)>0) 
+     printFlush(paste("Removing genes:", paste(names(datExpr)[!gsg$goodGenes], collapse = ", ")));
+  if (sum(!gsg$goodSamples)>0) 
+     printFlush(paste("Removing samples:", paste(rownames(datExpr)[!gsg$goodSamples], collapse = ", ")));
+  # Remove the offending genes and samples from the data:
+  datExpr = datExpr[gsg$goodSamples, gsg$goodGenes]
+}
+
+traitData = read.csv("study_design.csv");
+traitData$replicate<-gsub("t","8",as.character(traitData$replicate))
+traitData$replicate<-gsub("n","9",as.character(traitData$replicate))
+traitData$replicate <- as.numeric(traitData$replicate)
+allTraits = traitData[, -c(1, 7, 8, 9, 11)];
+allTraits = allTraits[, c(1,3,4,5,6,7) ];
+
+allTraits$sample_name <- paste("LI.",
+                           targets$light_intensity_group,
+                           ".T:",
+                           targets$temperature_group,
+                           ".r",
+                           targets$replicate, sep = "")
+
+tableSamples = rownames(datExpr);
+traitRows = match(tableSamples, allTraits$sample_name);
+datTraits = allTraits[traitRows, -1];
+rownames(datTraits) = allTraits[traitRows, 1];
+collectGarbage();
+
+```
+
+------------------------------------------------------------------------
+
+## Checking for outliers
+
+
+```{r Step 2: Looking for outliers}
+library(flashClust)
+# sample network based on squared Euclidean distance
+# note that we transpose the data
+A=adjacency(t(datExpr),type="distance")
+# this calculates the whole network connectivity
+k=as.numeric(apply(A,2,sum))-1
+# standardized connectivity
+Z.k=scale(k)
+
+# Designate samples as outlying
+# if their Z.k value is below the threshold
+thresholdZ.k=-2.5 # often -2.5 previously 5
+
+# the color vector indicates outlyingness (red)
+outlierColor=ifelse(Z.k<thresholdZ.k,"red","black")
+
+# calculate the cluster tree using flahsClust or hclust
+sampleTree = flashClust(as.dist(1-A), method = "average")
+# Convert traits to a color representation:
+# where red indicates high values
+traitColors=data.frame(numbers2colors(datTraits,signed=FALSE))
+dimnames(traitColors)[[2]]=paste(names(datTraits),sep="")
+datColors=data.frame(outlier=outlierColor,traitColors)
+# Plot the sample dendrogram and the colors underneath.
+plotDendroAndColors(sampleTree,groupLabels=names(datColors),
+colors=datColors,main="Sample dendrogram and trait heatmap")
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = "plots/WGCNA/check_for_outliers.pdf",   # The directory you want to save the file in
+    width = 20, # The width of the plot in inches
+    height = 20) # The height of the plot in inches
+# Step 2: Create the plot with R code
+plotDendroAndColors(sampleTree,groupLabels=names(datColors),
+colors=datColors,main="Sample dendrogram and trait heatmap")
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+# Remove outlying samples from expression and trait data
+remove.samples= Z.k<thresholdZ.k | is.na(Z.k)
+datExpr=datExpr[!remove.samples,]
+datTraits=datTraits[!remove.samples,]
+# Recompute the sample network among the remaining samples
+A=adjacency(t(datExpr),type="distance")
+# Let's recompute the Z.k values of outlyingness
+k=as.numeric(apply(A,2,sum))-1
+Z.k=scale(k)
+```
+
+------------------------------------------------------------------------
+
+# Choose a set of soft-thresholding powers
+
+```{r Step 3: Choose a set of soft-thresholding powers}
+# Choose a set of soft-thresholding powers
+powers = c(c(1:20))
+# Call the network topology analysis function
+sft = pickSoftThreshold(data = datExpr, powerVector = powers, verbose = 5, corFnc = "bicor", networkType="signed")
+# Plot the results:
+sizeGrWindow(9, 5)
+par(mfrow = c(1,2));
+cex1 = 0.9;
+# Scale-free topology fit index as a function of the soft-thresholding power
+{plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+     main = paste("Scale independence"))
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     labels=powers,cex=cex1,col="red")
+# this line corresponds to using an R^2 cut-off of h
+abline(h=0.60,col="red")}
+# Mean connectivity as a function of the soft-thresholding power
+{plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+     main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")}
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = "plots/WGCNA/scale_free_soft_threshold.pdf",   # The directory you want to save the file in
+    width = 20, # The width of the plot in inches
+    height = 20) # The height of the plot in inches
+# Step 2: Create the plot with R code
+
+# Scale-free topology fit index as a function of the soft-thresholding power
+{plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+     main = paste("Scale independence"))
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     labels=powers,cex=cex1,col="red")
+# this line corresponds to using an R^2 cut-off of h
+abline(h=0.60,col="red")}
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = "plots/WGCNA/soft_threshold_power_mean_connectivity.pdf",   # The directory you want to save the file in
+    width = 20, # The width of the plot in inches
+    height = 20) # The height of the plot in inches
+# Step 2: Create the plot with R code
+
+# Mean connectivity as a function of the soft-thresholding power
+{plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+     main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")}
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+softPower = 16;
+```
+
+------------------------------------------------------------------------
+
+## Automatic module detection via dynamic tree cutting
+
+```{r Step 4: Automatic module detection via dynamic tree cutting}
+mergingThresh = 0.25 # Find this number by manual investigation
+net = blockwiseModules(datExpr,corType="bicor",
+                       maxBlockSize=30000,
+                       networkType="signed",
+                       power=softPower,
+                       minModuleSize=30,
+                       maxPOutliers=0.05,
+                       mergeCutHeight=mergingThresh,
+                       numericLabels=TRUE,
+                       saveTOMs=TRUE,
+                       pamRespectsDendro=FALSE,
+                       saveTOMFileBase="TOM")
+moduleLabelsAutomatic=net$colors
+# Convert labels to colors for plotting
+moduleColorsAutomatic = labels2colors(moduleLabelsAutomatic)
+# A data frame with module eigengenes can be obtained as follows
+MEsAutomatic=net$MEs
+
+
+####
+light_intensity = as.data.frame(datTraits$light_intensity)
+names(light_intensity)="light_intensity"
+temperature = as.data.frame(datTraits$temperature)
+names(temperature)="temperature"
+absorption = as.data.frame(datTraits$absorption)
+names(absorption)="absorption"
+FvFm = as.data.frame(datTraits$FvFm)
+names(FvFm)="FvFm"
+
+# Next use this trait to define a gene significance variable
+GS.light_intensity=as.numeric(cor(datExpr,light_intensity,use="p"))
+# This translates the numeric values into colors
+GS.light_intensityColor=numbers2colors(GS.light_intensity,signed=T)
+# Next use this trait to define a gene significance variable
+GS.temperature=as.numeric(cor(datExpr,temperature,use="p"))
+# This translates the numeric values into colors
+GS.temperatureColor=numbers2colors(GS.temperature,signed=T)
+# Next use this trait to define a gene significance variable
+GS.absorption=as.numeric(cor(datExpr,absorption,use="p"))
+# This translates the numeric values into colors
+GS.absorptionColor=numbers2colors(GS.absorption,signed=T)
+# Next use this trait to define a gene significance variable
+GS.FvFm=as.numeric(cor(datExpr,FvFm,use="p"))
+# This translates the numeric values into colors
+GS.FvFmColor=numbers2colors(GS.FvFm,signed=T)
+###
+blocknumber=1
+datColors=data.frame(moduleColorsAutomatic,
+                     GS.light_intensityColor,
+                     GS.temperatureColor,
+                     GS.absorptionColor,
+                     GS.FvFmColor)[net$blockGenes[[blocknumber]],]
+
+
+# Plot the dendrogram and the module colors underneath
+plotDendroAndColors(net$dendrograms[[blocknumber]],colors=datColors,
+                    groupLabels=c("Module colors",
+                                  "GS.light_intensityColor",
+                                  "GS.temperatureColor",
+                                  "GS.absorptionColor",
+                                  "GS.FvFmColor"),
+                    dendroLabels=FALSE,
+                    hang=0.03,addGuide=TRUE,guideHang=0.05)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = "plots/WGCNA/dendrogram_and_module_colors.pdf",   # The directory you want to save the file in
+    width = 20, # The width of the plot in inches
+    height = 20) # The height of the plot in inches
+# Step 2: Create the plot with R code
+
+# Plot the dendrogram and the module colors underneath
+plotDendroAndColors(net$dendrograms[[blocknumber]],colors=datColors,
+                    groupLabels=c("Module colors",
+                                  "GS.light_intensityColor",
+                                  "GS.temperatureColor",
+                                  "GS.absorptionColor",
+                                  "GS.FvFmColor"),
+                    dendroLabels=FALSE,
+                    hang=0.03,addGuide=TRUE,guideHang=0.05,
+                    setLayout = FALSE,
+                    autoColorHeight = FALSE)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+# Calculate eigengenes
+MEList=moduleEigengenes(datExpr,colors=moduleColorsAutomatic)
+MEs = MEList$eigengenes
+# Add the weight to existing module eigengenes
+MET=orderMEs(cbind(MEs,light_intensity,temperature,absorption, FvFm))
+# Plot the relationships among the eigengenes and the trait
+plotEigengeneNetworks(MET,"",marDendro=c(0,4,1,2),
+marHeatmap=c(3,8,3,8),cex.lab=0.8,xLabelsAngle=90)
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = "plots/WGCNA/relationship_between_eigengenes_and_the_trait.pdf",   # The directory you want to save the file in
+    width = 25, # The width of the plot in inches
+    height = 25) # The height of the plot in inches
+# Step 2: Create the plot with R code
+
+# Plot the relationships among the eigengenes and the trait
+plotEigengeneNetworks(MET,"",marDendro=c(0,4,1,2),
+marHeatmap=c(8,13,8,13),cex.lab=0.8,xLabelsAngle=90)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+```
+
+------------------------------------------------------------------------
+
+## Relating modules to physiological traits
+
+```{r Step 5: Relating modules to physiological traits}
+# Choose a module assignment
+moduleColors=moduleColorsAutomatic
+# Define numbers of genes and samples
+nGenes = ncol(datExpr)
+nSamples = nrow(datExpr)
+# Recalculate MEs with color labels
+MEs0 = moduleEigengenes(datExpr,
+                        moduleColors,
+                        softPower = softPower)$eigengenes
+MEs = orderMEs(MEs0)
+modTraitCor = cor(MEs, datTraits, use = "p")
+modTraitP = corPvalueStudent(modTraitCor, nSamples)
+#Since we have a moderately large number of modules and traits,
+#a suitable graphical representation will help in reading
+#the table. We color code each association by the correlation value:
+# Will display correlations and their p-values
+textMatrix = paste(signif(modTraitCor, 2), "\n(",
+signif(modTraitP, 1), ")", sep = "")
+dim(textMatrix) = dim(modTraitCor)
+par(mar = c(6, 18, 3, 3))
+# Display the correlation values within a heatmap plot
+labeledHeatmap(Matrix = modTraitCor, xLabels = names(datTraits),
+yLabels = names(MEs), ySymbols = names(MEs),
+colorLabels =FALSE,colors=blueWhiteRed(50),textMatrix=textMatrix,
+setStdMargins = FALSE, cex.text = 0.5, zlim = c(-1,1),
+main = paste("Module-trait relationships"))
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = "plots/WGCNA/relating_module_and_traits_relationships.pdf",   # The directory you want to save the file in
+    width = 20, # The width of the plot in inches
+    height = 20) # The height of the plot in inches
+# Step 2: Create the plot with R code
+
+# Display the correlation values within a heatmap plot
+labeledHeatmap(Matrix = modTraitCor, xLabels = names(datTraits),
+yLabels = names(MEs), ySymbols = names(MEs), cex.lab.y = 0.8,
+colorLabels =FALSE,colors=blueWhiteRed(50),textMatrix=textMatrix,
+setStdMargins = TRUE, cex.text = 1, zlim = c(-1,1),
+main = paste("Module-trait relationships"))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+```
+
+## Gene relationship to trait and important modules: Gene Significance and Module Membership
+
+### Light intensity
+```{r Step 6.1: Gene relationship to trait and important modules: Gene Significance and Module Membership}
+# calculate the module membership values
+# (aka. module eigengene based connectivity kME):
+datKME=signedKME(datExpr, MEs, corFnc = "bicor")
+
+colorOfColumn=substring(names(datKME),4)
+selectModules <- unique(moduleColors)
+
+for (module in selectModules) {
+column = match(module,colorOfColumn)
+restModule=moduleColors==module
+verboseScatterplot(datKME[restModule,column],GS.light_intensity[restModule],
+xlab=paste("Module Membership ",module,"module"),ylab="GS.light_intensity",
+main=paste("kME.",module,"vs. GS"),col=module,corFnc = "bicor")
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/WGCNA/GS_Light_intensity_Module_membership/", module,".pdf"),   # The directory you want to save the file in
+    width = 20, # The width of the plot in inches
+    height = 20) # The height of the plot in inches
+# Step 2: Create the plot with R code
+
+verboseScatterplot(datKME[restModule,column],GS.light_intensity[restModule],
+xlab=paste("Module Membership ",module,"module"),ylab="GS.light_intensity",
+main=paste("kME.",module,"vs. GS"),col=module,corFnc = "bicor")
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+}
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/WGCNA/GS_Light_intensity_Module_membership/all-in-one.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+par(mfcol = c(5,6))
+for (module in selectModules) {
+    par(mar = c(2.7,1.2,2.7,1.2))
+    column = match(module,colorOfColumn)
+    restModule=moduleColors==module
+    verboseScatterplot(datKME[restModule,column],GS.light_intensity[restModule],
+                       corFnc = "bicor", ylab=NA, col=module)
+}
+par(mfcol = c(1,1))
+par(mar = rep(2,4))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+### Temperature
+
+```{r Step 6.2: Gene relationship to trait and important modules: Gene Significance and Module Membership}
+for (module in selectModules) {
+column = match(module,colorOfColumn)
+restModule=moduleColors==module
+verboseScatterplot(datKME[restModule,column],GS.temperature[restModule],
+xlab=paste("Module Membership ",module,"module"),ylab="GS.temperature",
+main=paste("kME.",module,"vs. GS"),col=module,corFnc = "bicor")
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/WGCNA/GS_Temperature_Module_membership/", module,".pdf"),   # The directory you want to save the file in
+    width = 20, # The width of the plot in inches
+    height = 20) # The height of the plot in inches
+# Step 2: Create the plot with R code
+
+verboseScatterplot(datKME[restModule,column],GS.temperature[restModule],
+xlab=paste("Module Membership ",module,"module"),ylab="GS.temperature",
+main=paste("kME.",module,"vs. GS"),col=module,corFnc = "bicor")
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+}
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/WGCNA/GS_Temperature_Module_membership/all-in-one.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+par(mfcol = c(5,6))
+for (module in selectModules) {
+    par(mar = c(2.7,1.2,2.7,1.2))
+    column = match(module,colorOfColumn)
+    restModule=moduleColors==module
+    verboseScatterplot(datKME[restModule,column],GS.temperature[restModule],
+                       corFnc = "bicor", ylab=NA, col=module)
+}
+par(mfcol = c(1,1))
+par(mar = rep(2,4))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+### FvFm
+
+```{r Step 6.3: Gene relationship to trait and important modules: Gene Significance and Module Membership}
+for (module in selectModules) {
+column = match(module,colorOfColumn)
+restModule=moduleColors==module
+verboseScatterplot(datKME[restModule,column],GS.FvFm[restModule],
+xlab=paste("Module Membership ",module,"module"),ylab="GS.FvFm",
+main=paste("kME.",module,"vs. GS"),col=module,corFnc = "bicor")
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/WGCNA/GS_FvFm_Module_membership/", module,".pdf"),   # The directory you want to save the file in
+    width = 20, # The width of the plot in inches
+    height = 20) # The height of the plot in inches
+# Step 2: Create the plot with R code
+
+verboseScatterplot(datKME[restModule,column],GS.FvFm[restModule],
+xlab=paste("Module Membership ",module,"module"),ylab="GS.FvFm",
+main=paste("kME.",module,"vs. GS"),col=module,corFnc = "bicor")
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+}
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/WGCNA/GS_FvFm_Module_membership/all-in-one.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+par(mfcol = c(5,6))
+for (module in selectModules) {
+    par(mar = c(2.7,1.2,2.7,1.2))
+    column = match(module,colorOfColumn)
+    restModule=moduleColors==module
+    verboseScatterplot(datKME[restModule,column],GS.FvFm[restModule],
+                       corFnc = "bicor", ylab=NA, col=module)
+}
+par(mfcol = c(1,1))
+par(mar = rep(2,4))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+## Output file for gene ontology analysis
+
+```{r Step 7: Output file for gene ontology analysis}
+# data frame with gene significances (cor with the traits)
+datGS.Traits=data.frame(cor(datExpr,datTraits,use="p"))
+names(datGS.Traits)=paste("cor",names(datGS.Traits),sep=".")
+
+datIntraConnect <- intramodularConnectivity.fromExpr(datExpr,
+                                  colors=moduleColors,
+                                  corFnc= "bicor",
+                                  networkType= "signed",
+                                  power = softPower,
+                                  getWholeNetworkConnectivity=T)
+
+
+datOutput=data.frame(GeneID=colnames(datExpr),
+                     GS.FvFm,
+                     GS.light_intensity,
+                     GS.temperature,
+                     GS.absorption,
+                     datIntraConnect,
+                     moduleColors,
+                     datGS.Traits,
+                     datKME)
+# save the results in a comma delimited file
+write.table(datOutput,"tables/WGCNA_Results.csv",row.names=F,sep=",")
+
+### Analysis of interesting modules
+
+interesting_module <- datOutput[datOutput$moduleColors %in% c("blue", "yellow", "lightcyan"),]
+subset_datExpr <- datExpr[,interesting_module$GeneID]
+datIntraConnect_subset <- intramodularConnectivity.fromExpr(subset_datExpr,
+                                  colors=interesting_module$moduleColors,
+                                  corFnc= "bicor",
+                                  networkType= "signed",
+                                  power = softPower,
+                                  getWholeNetworkConnectivity=T)
+blast <- read.csv("blast_AGI_tophit.csv", header = F)
+colnames(blast) <- c("Me", "Ath")
+blast$Me <- gsub("\\..*","",blast$Me)
+blast$Ath <- gsub("\\..*","",blast$Ath)
+blast <- blast %>% distinct(Me, .keep_all = TRUE)
+match1=match(interesting_module$GeneID,blast$Me)
+interesting_module$Ath <- blast$Ath[match1]
+
+datOutput_subset=data.frame(GeneID=colnames(subset_datExpr),
+                     datIntraConnect_subset,
+                     interesting_module$moduleColors,
+                     interesting_module$Ath)
+# save the results in a comma delimited file
+write.table(datOutput_subset,"tables/WGCNA_Results_interesting_modules.csv",row.names=F,sep=",")
+
+datOutput_blue <- datOutput_subset[datOutput_subset$interesting_module.moduleColors == "blue",]
+datOutput_blue_sorted <- datOutput_blue[order(datOutput_blue$kOut, decreasing = T),c(1,7)]
+datOutput_blue_sorted_sorted_top20 <- datOutput_blue_sorted[1:20,]
+write.csv(datOutput_blue_sorted_sorted_top20,
+              file = paste0("tables/WGCNA/hubs/hubs_between_interesting_modules/blue.csv"), row.names = F)
+
+datOutput_yellow <- datOutput_subset[datOutput_subset$interesting_module.moduleColors == "yellow",]
+datOutput_yellow_sorted <- datOutput_yellow[order(datOutput_yellow$kOut, decreasing = T),c(1,7)]
+datOutput_yellow_sorted_sorted_top20 <- datOutput_yellow_sorted[1:20,]
+write.csv(datOutput_yellow_sorted_sorted_top20,
+              file = paste0("tables/WGCNA/hubs/hubs_between_interesting_modules/yellow.csv"), row.names = F)
+
+datOutput_lightcyan <- datOutput_subset[datOutput_subset$interesting_module.moduleColors == "lightcyan",]
+datOutput_lightcyan_sorted <- datOutput_lightcyan[order(datOutput_lightcyan$kOut, decreasing = T),c(1,7)]
+datOutput_lightcyan_sorted_sorted_top20 <- datOutput_lightcyan_sorted[1:20,]
+write.csv(datOutput_lightcyan_sorted_sorted_top20,
+              file = paste0("tables/WGCNA/hubs/hubs_between_interesting_modules/lightcyan.csv"), row.names = F)
+```
+
+## Visualizing the network
+
+###  TOM plots
+
+```{r Step 8: Visualizing the network - TOM plots}
+# LONG RUN - TOOK AROUND 1 HOUR TO FINISH
+# Set the diagonal of the TOM disscimilarity to NA
+A = adjacency(datExpr,
+              power = softPower,
+              type="signed",
+              corFnc= "bicor")
+dissTOM =TOMdist(A, TOMType="signed")
+geneTree = flashClust(as.dist(dissTOM),method="average")
+diag(dissTOM) = NA
+# Transform dissTOM with a power to enhance visibility
+library(gplots)
+myheatcol = colorpanel(250,'red',"orange",'lemonchiffon')
+
+## Solve the color problem
+dissim <- dissTOM^7
+#TOMplot(dissim,
+#        dendro=geneTree,
+#        Colors=moduleColors,
+#        col=myheatcol,
+#        main = "Network heatmap plot, all genes")
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/WGCNA/TOMplot.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+# Step 2: Create the plot with R code
+
+TOMplot(dissim,
+        dendro=geneTree,
+        Colors=moduleColors,
+        col=myheatcol,
+        main = "Network heatmap plot, all genes")
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+# Step 1: Call the pdf command to start the plot
+jpeg(file = paste0("plots/WGCNA/TOMplot.jpeg")) # The height of the plot in inches
+# Step 2: Create the plot with R code
+
+TOMplot(dissim,
+        dendro=geneTree,
+        Colors=moduleColors,
+        col=myheatcol,
+        main = "Network heatmap plot, all genes",
+        setLayout = TRUE)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+
+###  MDS plots
+
+```{r Step 9: Visualizing the network - MDS plots}
+# VERY LONG RUN TIME - DID NOT FINISH AFTER 2 HOURS
+#cmd1=cmdscale(as.dist(dissTOM),2)
+#par(mfrow=c(1,1))
+#plot(cmd1,
+#     col=restModule,
+#     main="MDS plot",
+#     xlab="Scaling Dimension 1",
+#     ylab="Scaling Dimension 2")
+```
+
+##  Network Visualization
+```{r Step 10: Visualizing the network}
+# Set the diagonal of the TOM disscimilarity to NA
+A = adjacency(datExpr,
+              power = softPower,
+              type="signed",
+              corFnc= "bicor")
+TOM <- TOMsimilarity(A, TOMType = "signed")
+# select modules
+modules = unique(moduleColors) # Take all modules - can use module colors
+# Select module gene IDs
+inModule=is.finite(match(moduleColors,modules))
+# Select module gene IDs
+geneID = colnames(datExpr)
+modGeneID=geneID[inModule]
+
+blast <- read.csv("blast_AGI_tophit.csv", header = F)
+blast$V1 <- gsub("\\..*","",blast$V1)
+blast$V2 <- gsub("\\..*","",blast$V2)
+library(dplyr)
+blast <- blast %>% distinct(V1, .keep_all = TRUE)
+colnames(blast) <- c("Me", "Ath")
+
+
+match1=match(modGeneID,blast$Me)
+modGenes=blast$Ath[match1]
+# Select the corresponding Topological Overlap
+modTOM = TOM[inModule, inModule]
+dimnames(modTOM) = list(modGeneID, modGeneID)
+# Export the network into edge and node list files for Cytoscape
+cyt = exportNetworkToCytoscape(modTOM,
+edgeFile=paste("tables/WGCNA/Cytoscape/CytoEdge",paste(modules,collapse="-"),".txt",sep=""),
+nodeFile=paste("tables/WGCNA/Cytoscape/CytoNode",paste(modules,collapse="-"),".txt",sep=""),
+weighted = TRUE, threshold = 0.1,nodeNames=geneID,
+altNodeNames = modGenes, nodeAttr = moduleColors[inModule])
+
+selectModules <- unique(moduleColors)
+for (modules in selectModules) {
+geneIDs = colnames(datExpr)
+# Select module probes
+inModule=is.finite(match(moduleColors,modules))
+modGenes=geneIDs[inModule]
+match1=match(modGenes,blast$Me)
+modAth=blast$Ath[match1]
+# Select the corresponding Topological Overlap
+modTOM = TOM[inModule, inModule]
+dimnames(modTOM) = list(modGenes, modGenes)
+# Export the network into edge and node list files for Cytoscape
+cyt = exportNetworkToCytoscape(modTOM,
+                             edgeFile=paste("tables/WGCNA/Cytoscape/CytoEdge",
+                                        paste(modules,collapse="-"),
+                                        ".txt",
+                                        sep=""),
+                             nodeFile=paste("tables/WGCNA/Cytoscape/CytoNode",
+                                        paste(modules,collapse="-"),
+                                        ".txt",
+                                        sep=""),
+                             weighted = TRUE,
+                             threshold = 0.1,
+                             nodeNames=modGenes,
+                             altNodeNames = modAth,
+                             nodeAttr = moduleColors[inModule])
+}
+
+```
+
+##  Heatmap of the modules expression values
+
+```{r Step 11: Heatmap of the modules expression values, fig.width=15, fig.height=7}
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+selectModules <- substring(names(MEs),3)
+
+for (whichmodule in selectModules) {
+Eigengene=paste0("ME",whichmodule)
+datExprModule=datExpr[,moduleColors==whichmodule]
+# set the margins of the graphics window
+#par(mfrow=c(1,1),mar=c(6, 8, 6, 8))
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+pheatmap(t(datExprModule),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = FALSE,
+         col = myheatcolors,
+         main=paste("Module eigengene expression values",whichmodule,"module"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/WGCNA/heatmap_of_the_modules_expression_values/", whichmodule, ".pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+# Step 2: Create the plot with R code
+
+# and whose rows correspond to genes
+pheatmap(t(datExprModule),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = FALSE,
+         col = myheatcolors,
+         main=paste("Module eigengene expression values",whichmodule,"module"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+}
+
+for (whichmodule in selectModules) {
+Eigengene=paste0("ME",whichmodule)
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/WGCNA/heatmap_of_the_modules_expression_values/barplot/", whichmodule,".pdf"),   # The directory you want to save the file in
+    width = 5, # The width of the plot in inches
+    height = 5) # The height of the plot in inches
+# Step 2: Create the plot with R code
+
+ME_sub=MEs[, paste("ME",whichmodule, sep="")]
+barplot(ME_sub, col=whichmodule, main=paste("heatmap",whichmodule,"module"),
+ylab="eigengene expression",xlab="array sample")
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+}
+```
+
+##  Measure of module significance as average gene significance
+
+### Light intensity
+```{r Step 12.1: Measure of module significance as average gene significance - light intensity, fig.width=20, fig.height=7}
+library(stringr)
+
+GS1=as.numeric(cor(light_intensity,datExpr, use="p"))
+GeneSignificance=abs(GS1)
+# Next module significance is defined as average gene significance.
+ModuleSignificance=tapply(GeneSignificance, moduleColors, mean, na.rm=T)
+plotModuleSignificance(GeneSignificance,moduleColors, las=2)
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/WGCNA/Light_intensity_MS_as_average_gene_significance.pdf"),   # The directory you want to save the file in
+    width = 20, # The width of the plot in inches
+    height = 15) # The height of the plot in inches
+# Step 2: Create the plot with R code
+par(mar = c(8,7,8,4) + 0.1)
+plotModuleSignificance(GeneSignificance,moduleColors, las=2)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+```
+
+### Temperature
+```{r Step 12.1: Measure of module significance as average gene significance - temperature, fig.width=20, fig.height=7}
+GS1=as.numeric(cor(temperature,datExpr, use="p"))
+GeneSignificance=abs(GS1)
+# Next module significance is defined as average gene significance.
+ModuleSignificance=tapply(GeneSignificance, moduleColors, mean, na.rm=T)
+plotModuleSignificance(GeneSignificance,moduleColors, las=2)
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/WGCNA/Temperature_MS_as_average_gene_significance.pdf"),   # The directory you want to save the file in
+    width = 20, # The width of the plot in inches
+    height = 15) # The height of the plot in inches
+# Step 2: Create the plot with R code
+par(mar = c(8,7,8,4) + 0.1)
+plotModuleSignificance(GeneSignificance,moduleColors, las=2)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+### FvFm
+
+```{r Step 12.1: Measure of module significance as average gene significance - FvFm, fig.width=20, fig.height=7}
+GS1=as.numeric(cor(FvFm,datExpr, use="p"))
+GeneSignificance=abs(GS1)
+# Next module significance is defined as average gene significance.
+ModuleSignificance=tapply(GeneSignificance, moduleColors, mean, na.rm=T)
+plotModuleSignificance(GeneSignificance,moduleColors, las=2)
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/WGCNA/FvFm_MS_as_average_gene_significance.pdf"),   # The directory you want to save the file in
+    width = 20, # The width of the plot in inches
+    height = 15) # The height of the plot in inches
+# Step 2: Create the plot with R code
+par(mar = c(8,7,8,4) + 0.1)
+plotModuleSignificance(GeneSignificance,moduleColors, las=2)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+## Enrichment
+
+### GO
+
+```{r Step 13: GO enrichment}
+library(clusterProfiler)
+library(enrichplot)
+library(tidyverse)
+library(dplyr)
+
+module_table <- read.csv("WGCNA_Results.csv")
+term2gene <- read.csv2("term2gene_GO.csv")
+term2gene <- term2gene[,-1] # remove the first index row
+term2name <- read.csv2("term2name_GO.csv")
+term2name <- term2name[,-1] # remove the first index row
+
+common <- intersect(term2gene$gene, module_table$GeneID)
+my_universe <- term2gene[term2gene$gene %in% module_table$GeneID,]
+
+selectModules <- unique(module_table$moduleColors)
+
+for (whichmodule in selectModules) {
+module <- filter(module_table, moduleColors==whichmodule) 
+genes <- module$GeneID
+
+enrichment <- enricher(genes,
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.05,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.05)
+#save the enrichment result
+write.csv(file = paste0("tables/WGCNA/GO/",whichmodule,".csv"), x = enrichment@result)
+
+if (any(enrichment@result$p.adjust <= 0.05)){
+
+    p <- dotplot(enrichment,
+        x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+        color="p.adjust",
+        orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+        showCategory=50,
+        font.size=8) + ggtitle("dotplot for ORA")
+    ggsave(filename = paste0("plots/WGCNA/GO/dotplot/", whichmodule,".pdf"),plot =  p,  dpi = 600,
+       width = 40, height = 40, units = "cm")
+    
+    FC <- setNames(as.numeric(module$kWithin), module$GeneID)
+    FC_max <- max(FC)
+    FC_min <- min(FC)
+    FC_norm <- (FC-FC_min)/(FC_max-FC_min)
+    p <- cnetplot(enrichment,
+         node_label="all",
+         foldChange=FC_norm,
+         showCategory = 30,
+         colorEdge = TRUE,
+         cex_label_gene = 0.5,
+         cex_label_category=0.5,
+         layout = "kk")
+    
+    ggsave(filename = paste0("plots/WGCNA/GO/cnetplot/", whichmodule,".pdf"),plot =  p,  dpi = 600,
+       width =  60, height = 40, units = "cm")
+}
+}
+```
+
+## Gene ID distribution
+
+```{r Step 14: Gene ID distribution}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(scales)  # for percentage scales
+library(cowplot)
+
+gene_term_ath <- read_tsv("arabidopsis/abscisic_acid_biosynthetic_process.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/abscisic_acid_biosynthetic_process.tsv")
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p1 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("abscisic acid biosynthetic process")+
+    theme(axis.text.x = element_text(angle = 90))
+
+##
+gene_term_ath <- read_tsv("arabidopsis/abscisic_acid_metabolic_process.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/abscisic_acid_metabolic_process.tsv")
+
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p2 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("abscisic acid metabolic process")+
+    theme(axis.text.x = element_text(angle = 90))
+##
+gene_term_ath <- read_tsv("arabidopsis/abscisic_acid-activated_signaling_pathway.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/abscisic_acid-activated_signaling_pathway.tsv")
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p3 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("abscisic acid-activated signaling pathway")+
+    theme(axis.text.x = element_text(angle = 90))
+##
+gene_term_ath <- read_tsv("arabidopsis/cellular_response_to_cold.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/cellular_response_to_cold.tsv")
+
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p4 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("cellular response to cold")+
+    theme(axis.text.x = element_text(angle = 90))
+##
+gene_term_ath <- read_tsv("arabidopsis/cellular_response_to_heat.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/cellular_response_to_heat.tsv")
+
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p5 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("cellular response to heat")+
+    theme(axis.text.x = element_text(angle = 90))
+##
+gene_term_ath <- read_tsv("arabidopsis/cold_acclimation.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/cold_acclimation.tsv")
+
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p6 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("cold acclimation")+
+    theme(axis.text.x = element_text(angle = 90))
+##
+gene_term_ath <- read_tsv("arabidopsis/heat_acclimation.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/heat_acclimation.tsv")
+
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p7 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("heat acclimation")+
+    theme(axis.text.x = element_text(angle = 90))
+##
+gene_term_ath <- read_tsv("arabidopsis/phenylpropanoid_biosynthetic_process.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/phenylpropanoid_biosynthetic_process.tsv")
+
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p8 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("phenylpropanoid biosynthetic process")+
+    theme(axis.text.x = element_text(angle = 90))
+##
+gene_term_ath <- read_tsv("arabidopsis/phenylpropanoid_metabolic_process.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/phenylpropanoid_metabolic_process.tsv")
+
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p9 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("phenylpropanoid metabolic process")+
+    theme(axis.text.x = element_text(angle = 90))
+##
+gene_term_ath <- read_tsv("arabidopsis/regulation_of_abscisic_acid_biosynthetic_process.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/regulation_of_abscisic_acid_biosynthetic_process.tsv")
+
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p10 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("regulation of abscisic acid biosynthetic process")+
+    theme(axis.text.x = element_text(angle = 90))
+##
+gene_term_ath <- read_tsv("arabidopsis/regulation_of_abscisic_acid-activated_signaling_pathway.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/regulation_of_abscisic_acid-activated_signaling_pathway.tsv")
+
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p11 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("regulation of abscisic acid-activated signaling pathway")+
+    theme(axis.text.x = element_text(angle = 90))
+##
+gene_term_ath <- read_tsv("arabidopsis/response_to_cold.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/response_to_cold.tsv")
+
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p12 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("response to cold")+
+    theme(axis.text.x = element_text(angle = 90))
+##
+gene_term_ath <- read_tsv("arabidopsis/response_to_heat.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/response_to_heat.tsv")
+
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p13 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("response to heat")+
+    theme(axis.text.x = element_text(angle = 90))
+##
+gene_term_ath <- read_tsv("arabidopsis/response_to_high_light_intensity.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/response_to_high_light_intensity.tsv")
+
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p14 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("response to high light intensity")+
+    theme(axis.text.x = element_text(angle = 90))
+##
+gene_term_ath <- read_tsv("arabidopsis/response_to_light_intensity.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/response_to_light_intensity.tsv")
+
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p15 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("response to light intensity")+
+    theme(axis.text.x = element_text(angle = 90))
+##
+gene_term_ath <- read_tsv("arabidopsis/response_to_low_light_intensity_stimulus.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/response_to_low_light_intensity_stimulus.tsv")
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p16 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("response to low light intensity stimulus")+
+    theme(axis.text.x = element_text(angle = 90))
+##
+gene_term_ath <- read_tsv("arabidopsis/terpenoid_biosynthetic_process.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/terpenoid_biosynthetic_process.tsv")
+
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p17 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("terpenoid biosynthetic process")+
+    theme(axis.text.x = element_text(angle = 90))
+##
+gene_term_ath <- read_tsv("arabidopsis/Till_lipid_droplet.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+# add Me ID for each Ath ID
+m <- match(gene_term_ath$X1, blast_hit_uniq$Ath)
+gene_term_ath$Me <- as.character(blast_hit_uniq$Me[m])
+gene_term_ath$Me[is.na(gene_term_ath$Me)] <- "No_blast"
+# add module colors for each gene
+n <- match(gene_term_ath$Me, datOutput$GeneID)
+gene_term_ath$Module <- as.character(datOutput$moduleColors[n])
+gene_term_ath$Module[is.na(gene_term_ath$Module)] <- "No_blast"
+
+write_tsv(gene_term_ath, "tables/WGCNA/blast/Till_lipid_droplet.tsv")
+
+
+a <- gene_term_ath %>%
+    group_by(Module) %>%
+    summarise(percent = 100 * n() / nrow( gene_term_ath ))
+
+a2 <- a[!(a$Module=="No_blast"),]
+
+p18 <- ggplot(a2, aes(x=Module,y=percent)) +
+    geom_bar(stat = "identity", fill=a2$Module) +
+    ylab("Percentage")+
+    ggtitle("Till lipid droplet")+
+    theme(axis.text.x = element_text(angle = 90))
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/WGCNA/interesting_genes_ditribution_among_modules.pdf"),   # The directory you want to save the file in
+    width = 18, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+plot_grid(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,p11,p12,p13,p14,p15,p16,p17,p18,  hjust = T, vjust = T, nrow = 6, ncol = 3 )
+
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+## Heatmap of gene expression for interesting genes based on A. thaliana keywords blast hit
+
+```{r Step 15: Heatmap of gene expression for interesting genes based on A. thaliana keywords blast hit}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(cowplot)
+
+gene_term_ath <- read_tsv("arabidopsis/abscisic_acid_biosynthetic_process.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Abscisic acid biosynthetic process genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/abscisic_acid_biosynthetic_process_genes.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+gene_term_ath <- read_tsv("arabidopsis/abscisic_acid_metabolic_process.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Abscisic acid metabolic process genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/abscisic_acid_metabolic_process_genes.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+gene_term_ath <- read_tsv("arabidopsis/abscisic_acid-activated_signaling_pathway.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Abscisic acid-activated signaling pathway genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/abscisic_acid-activated_signaling_pathway_genes.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+gene_term_ath <- read_tsv("arabidopsis/cellular_response_to_cold.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Cellular response to cold genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/cellular_response_to_cold_genes.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+gene_term_ath <- read_tsv("arabidopsis/cellular_response_to_heat.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Cellular response to heat genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/cellular_response_to_heat_genes.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+gene_term_ath <- read_tsv("arabidopsis/cold_acclimation.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Cold acclimation genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/cold_acclimation_genes.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+gene_term_ath <- read_tsv("arabidopsis/heat_acclimation.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Heat acclimation genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/heat_acclimation_genes.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+gene_term_ath <- read_tsv("arabidopsis/phenylpropanoid_biosynthetic_process.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Phenylpropanoid biosynthetic process genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/phenylpropanoid_biosynthetic_process_genes.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+gene_term_ath <- read_tsv("arabidopsis/phenylpropanoid_metabolic_process.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Phenylpropanoid metabolic process genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/phenylpropanoid_metabolic_process_genes.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+gene_term_ath <- read_tsv("arabidopsis/regulation_of_abscisic_acid_biosynthetic_process.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Regulation of abscisic acid biosynthetic processs genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/regulation_of_abscisic_acid_biosynthetic_process_genes.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+gene_term_ath <- read_tsv("arabidopsis/regulation_of_abscisic_acid-activated_signaling_pathway.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Regulation of abscisic acid-activated signaling pathway genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/regulation_of_abscisic_acid-activated_signaling_pathway_genes.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+gene_term_ath <- read_tsv("arabidopsis/response_to_cold.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Response to cold genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/response_to_cold_genes.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+gene_term_ath <- read_tsv("arabidopsis/response_to_heat.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Response to heat genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/response_to_heat_genes.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+gene_term_ath <- read_tsv("arabidopsis/response_to_high_light_intensity.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Response to high light intensity genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/response_to_high_light_intensity.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+gene_term_ath <- read_tsv("arabidopsis/response_to_light_intensity.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Response to light intensity genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/response_to_light_intensity.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+gene_term_ath <- read_tsv("arabidopsis/response_to_low_light_intensity_stimulus.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Response to low light intensity stimulus genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/response_to_low_light_intensity_stimulus.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+gene_term_ath <- read_tsv("arabidopsis/terpenoid_biosynthetic_process.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Terpenoid biosynthetic process genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/terpenoid_biosynthetic_process.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+gene_term_ath <- read_tsv("arabidopsis/Till_lipid_droplet.txt", col_names = F)
+
+blast_hit <- read_csv("blast_AGI_tophit.csv", col_names = F)
+colnames(blast_hit) <- c("Me", "Ath")
+blast_hit$Me <- gsub("\\..*","",blast_hit$Me)
+blast_hit$Ath <- gsub("\\..*","",blast_hit$Ath)
+
+blast_hit_uniq <- blast_hit %>% distinct(Me, .keep_all= TRUE)
+
+###
+blast_hit_uniq_filtered <- blast_hit_uniq %>%
+    filter(Ath %in% gene_term_ath$X1)
+###
+n <- match(blast_hit_uniq_filtered$Me, colnames(datExpr))
+blast_hit_uniq_filtered$MeExpr <- as.character(colnames(datExpr)[n])
+blast_hit_uniq_filtered$MeExpr[is.na(blast_hit_uniq_filtered$MeExpr)] <- "No_expression"
+
+blast_hit_uniq_filtered <- blast_hit_uniq_filtered[!(blast_hit_uniq_filtered$MeExpr=="No_expression"),]
+
+
+library("pheatmap")
+myheatcolors <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+datExprPath <- datExpr[,blast_hit_uniq_filtered$Me]
+blast_hit_uniq_filtered$ID <- paste(blast_hit_uniq_filtered$Ath, "|", blast_hit_uniq_filtered$Me)
+colnames(datExprPath) <- blast_hit_uniq_filtered$ID
+# create a heatmap whose columns correspond to the arrays
+# and whose rows correspond to genes
+p <- pheatmap(t(datExprPath),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method="complete",
+         show_rownames = TRUE,
+         col = myheatcolors,
+         main=paste("Till lipid droplet genes best blast hit gene expression"),
+         scale ="row",
+         border_color=FALSE,
+         fontsize=8,cex=0.8)
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste("plots/WGCNA/blast_heatmap/Till_lipid_droplet.pdf"),   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+print(p)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+```{r Step 16: Gene expression profile for each module}
+library(tidyverse)
+library(ggplot2)
+library(MetBrewer)
+
+template.df <- traitData
+template.df$ID <- paste("LI.",
+                        targets$light_intensity_group,
+                        ".T:",
+                        targets$temperature_group,
+                        ".r",
+                        targets$replicate, sep = "")
+template.df <- template.df[order(template.df$temperature_group, template.df$sample_name),]
+
+
+for (whichmodule in selectModules) {
+datExprModule=datExpr[,moduleColors==whichmodule]
+
+datExprModule.df <- as_tibble(datExprModule, rownames = "condition")
+datExprModule.df_ordered <- datExprModule.df[match(template.df$ID, datExprModule.df$condition),]
+datExprModule.df_ordered <- na.omit(datExprModule.df_ordered)
+datExprModule.df_ordered$condition <- 1:128
+
+datExprModule_pivoted <-
+    pivot_longer(datExprModule.df_ordered,
+                 cols=2:length(colnames(datExprModule.df_ordered)),
+                 names_to="genes",
+                 values_to="expression")
+
+RECT = data.frame(
+    xmin=c(1,4,7,10,13,16,19,25,28,31,34,37,40,43,49,52,55,58,61,64,70,73,
+           76,79,82,85,91,94,97,100,103,108,112,116,118,121,123,126),
+    xmax=c(4,7,10,13,16,19,25,28,31,34,37,40,43,49,52,55,58,61,64,70,73,
+           76,79,82,85,91,94,97,100,103,108,112,116,118,121,123,126,128),
+    ymin=-Inf,
+    ymax=Inf
+)
+
+p <- ggplot(datExprModule_pivoted, aes(x=factor(condition), y=expression)) +
+    geom_rect(data=RECT,inherit.aes=FALSE,aes(xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax),
+              fill=met.brewer(name="Egypt", n=38),alpha=0.5) +
+    geom_line(aes(group = genes), size = 0.5, alpha = 0.3, color = "black") + 
+    # Trend line
+    #geom_smooth(size = 2, se = FALSE, color = "orange") +
+    #scale_x_continuous(breaks = datExprModule_pivoted$condition) +
+    stat_summary(aes(x=as.numeric(condition)), fun=median, geom='line',
+                 size=2, color='orange') +
+    geom_hline(yintercept = 0, linetype = 2, color = "red") +
+    scale_x_discrete(labels = template.df$ID) +
+    ggtitle(paste0("Gene expression profile of ", whichmodule, " module")) +
+    theme(text = element_text(size=10),
+          axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+ggsave(filename = paste0("plots/WGCNA/gene_expression_profile/", whichmodule, ".pdf"),plot = p,width = 20,height = 20,dpi = 300)
+}
+```
+
+
+### Find hubs
+
+```{r Step 17: Find hubs}
+library(tidyverse)
+network <- read.csv("tables/WGCNA_Results.csv")
+
+for (whichmodule in selectModules) {
+    network_sub <- network[network$moduleColors == whichmodule,]
+    network_sub_Within_sorted <- network_sub[order(network_sub$kWithin,
+                                                   decreasing = T),1]
+    network_sub_Within_sorted_top20 <- network_sub_Within_sorted[1:20]
+    write.csv(network_sub_Within_sorted_top20,
+              file = paste0("tables/WGCNA/hubs/within_module/", whichmodule, ".csv"))
+}
+network_sorted <- network[order(network$kOut, decreasing = T),]
+network_sorted_top300 <- network_sorted[1:300, c("GeneID", "moduleColors")]
+write.csv(network_sorted_top300, file = "tables/WGCNA/hubs/extra_modular.csv")
+```
+
+## Session info
+
+```{r session info}
+sessionInfo()
+```

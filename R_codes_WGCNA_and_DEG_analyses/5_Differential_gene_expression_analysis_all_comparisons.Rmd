@@ -1,0 +1,561 @@
+---
+title: "<center> Response to a gradient of environmental cues in mesotaenium endlicherianum<center>"
+author: "<center> Armin Dadras <center><br>"
+date: "<center> _`r Sys.Date()`_ <center>"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    theme: yeti
+    highlight: tango
+    toc: yes
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    number_sections: true
+  pdf_document:
+    fig_caption: yes
+    toc: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(rmarkdown)
+library(tinytex)
+library(knitr)
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+```
+
+------------------------------------------------------------------------
+
+# Importing data into R
+
+After read mapping with HISAT2, [TxImport](https://bioconductor.org/packages/release/bioc/html/tximport.html) was used to read Stringtie outputs into the R environment. Annotation data was used to summarize data from transcript-level to gene-level.
+
+```{r Step 1: Importing count data into R}
+library(tidyverse) # provides access to Hadley Wickham's collection of R packages for data science
+library(tximport)
+library(edgeR)
+library(matrixStats)
+library(cowplot)
+library(rhdf5)
+
+targets <- read.csv("study_design.csv", header = T)
+
+## Determine samples I am interested in
+#targets <- targets %>%
+#    filter(targets$condition_not_to_use %in% (c("standard_growth", "heat")))
+
+sampleLabels <- targets$sample_name
+path <- file.path("kallisto",paste0(targets$sample_id), "abundance.h5") 
+#check if files exist for all samples in study design file
+Tx <- read_tsv("tx2gene.tsv")
+
+Txi_gene <- tximport(path,
+         type = "kallisto",
+         countsFromAbundance = "lengthScaledTPM",
+         tx2gene = Tx,
+         txOut = F,
+         ignoreTxVersion = F)
+```
+
+------------------------------------------------------------------------
+
+# Preprocessing
+
+## Impact of filtering and normalization
+
+The abundance data are TPM, while the counts are read counts mapping to each gene or transcript.
+
+```{r Step 2: Impact of filtering and normalization}
+myDGEList <- DGEList(Txi_gene$counts) # Make a DGElist from the counts
+log2.cpm <- cpm(myDGEList, log=TRUE) # use the 'cpm' function from EdgeR to get counts per million
+log2.cpm.df <- as_tibble(log2.cpm, rownames = "geneID")
+colnames(log2.cpm.df) <- c("geneID", sampleLabels)
+log2.cpm.df.pivot <- pivot_longer(log2.cpm.df, # dataframe to be pivoted
+                                  cols = 2:(length(sampleLabels)+1), # column names to be stored as a SINGLE variable
+                                  names_to = "samples", # name of that new variable (column)
+                                  values_to = "expression") # name of new variable (column) storing all the values (data)
+
+p1 <- ggplot(log2.cpm.df.pivot) +
+  aes(x=samples, y=expression, fill=samples) +
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun = "median",
+               geom = "point",
+               shape = 95,
+               size = 10,
+               color = "black",
+               show.legend = FALSE) +
+  labs(y="log2 expression", x = "sample",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="unfiltered, non-normalized",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90),
+        plot.title = element_text(size = 8),
+        plot.subtitle = element_text(size = 6))
+
+# Filter myDGEList
+cpm <- cpm(myDGEList)
+# The line below is important! This is where the filtering starts
+keepers <- rowSums(cpm>1)>=3 #user defined
+myDGEList.filtered <- myDGEList[keepers,]
+
+log2.cpm.filtered <- cpm(myDGEList.filtered, log=TRUE)
+log2.cpm.filtered.df <- as_tibble(log2.cpm.filtered, rownames = "geneID")
+colnames(log2.cpm.filtered.df) <- c("geneID", sampleLabels)
+log2.cpm.filtered.df.pivot <- pivot_longer(log2.cpm.filtered.df, # dataframe to be pivoted
+                                           cols = 2:(length(sampleLabels)+1), # column names to be stored as a SINGLE variable
+                                           names_to = "samples", # name of that new variable (column)
+                                           values_to = "expression") # name of new variable (column) storing all the values (data)
+
+p2 <- ggplot(log2.cpm.filtered.df.pivot) +
+  aes(x=samples, y=expression, fill=samples) +
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun = "median",
+               geom = "point",
+               shape = 95,
+               size = 10,
+               color = "black",
+               show.legend = FALSE) +
+  labs(y="log2 expression", x = "sample",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="filtered, non-normalized",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90),
+        plot.title = element_text(size = 8),
+        plot.subtitle = element_text(size = 6))
+
+# Normalize the data
+myDGEList.filtered.norm <- calcNormFactors(myDGEList.filtered, method = "TMM")
+log2.cpm.filtered.norm <- cpm(myDGEList.filtered.norm, log=TRUE)
+log2.cpm.filtered.norm.df <- as_tibble(log2.cpm.filtered.norm, rownames = "geneID")
+colnames(log2.cpm.filtered.norm.df) <- c("geneID", sampleLabels)
+log2.cpm.filtered.norm.df.pivot <- pivot_longer(log2.cpm.filtered.norm.df, # dataframe to be pivoted
+                                                cols = 2:(length(sampleLabels)+1), # column names to be stored as a SINGLE variable
+                                                names_to = "samples", # name of that new variable (column)
+                                                values_to = "expression") # name of new variable (column) storing all the values (data)
+
+p3 <- ggplot(log2.cpm.filtered.norm.df.pivot) +
+  aes(x=samples, y=expression, fill=samples) +
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun = "median",
+               geom = "point",
+               shape = 95,
+               size = 10,
+               color = "black",
+               show.legend = FALSE) +
+  labs(y="log2 expression", x = "sample",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="filtered, TMM normalized",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90),
+        plot.title = element_text(size = 8),
+        plot.subtitle = element_text(size = 6))
+
+```
+
+------------------------------------------------------------------------
+
+Filtering was carried out to remove lowly expressed genes. Genes with less than 1 count per million (CPM) in at least 3 or more samples filtered out. This reduced the number of genes from `r nrow(myDGEList)` to `r nrow(myDGEList.filtered.norm)`.
+
+------------------------------------------------------------------------
+
+## Table of filtered and normalized data
+
+The table that includes expression data for `r nrow(myDGEList.filtered.norm)` genes are saved in`tables/heat/filtered_and_TMM_normalized_counts.tsv`.
+
+------------------------------------------------------------------------
+
+```{r Step 3: Table of filtered and normalized data}
+mydata.df <- log2.cpm.filtered.norm.df %>%
+  mutate_if(is.numeric, round, 2)
+
+write_tsv(mydata.df, "tables/filtered_and_TMM_normalized_counts.tsv")
+```
+
+------------------------------------------------------------------------
+
+# Model the mean-variance relationship
+
+```{r Step 5.1: Model the mean-variance relationship}
+library(limma)
+library(gt)
+library(DT)
+library(plotly)
+
+group <- targets$DEG_group
+group <- factor(group)
+group <- relevel(group, ref = "LLI_MT")
+
+design <- model.matrix(~0 + group)
+colnames(design) <- c(levels(group))
+colnames(myDGEList.filtered.norm) <- sampleLabels
+
+# Use VOOM function from Limma package to model the mean-variance relationship
+v.DEGList.filtered.norm <- voom(myDGEList.filtered.norm, design,
+                                plot = TRUE)
+v.DEGList.filtered.norm_E.df <- as_tibble(v.DEGList.filtered.norm$E,
+                                          rownames = "geneID")
+
+corfit <- duplicateCorrelation(v.DEGList.filtered.norm, ndups = 1, block = targets$biolrep)
+
+
+fit <- lmFit(v.DEGList.filtered.norm, design, block = targets$biolrep, cor = corfit$consensus)
+
+contrasts <- c("HLI_MT-HLI_LT", "HLI_HT-HLI_LT", "MLI_LT-HLI_LT", "MLI_MT-HLI_LT", "MLI_HT-HLI_LT", "LLI_LT-HLI_LT", "LLI_MT-HLI_LT", "LLI_HT-HLI_LT",
+               "HLI_HT-HLI_MT", "MLI_LT-HLI_MT", "MLI_MT-HLI_MT", "MLI_HT-HLI_MT", "LLI_LT-HLI_MT", "LLI_MT-HLI_MT", "LLI_HT-HLI_MT",
+               "MLI_LT-HLI_HT", "MLI_MT-HLI_HT", "MLI_HT-HLI_HT", "LLI_LT-HLI_HT", "LLI_MT-HLI_HT", "LLI_HT-HLI_HT",
+               "MLI_MT-MLI_LT", "MLI_HT-MLI_LT", "LLI_LT-MLI_LT", "LLI_MT-MLI_LT", "LLI_HT-MLI_LT",
+               "MLI_HT-MLI_MT", "LLI_LT-MLI_MT", "LLI_MT-MLI_MT", "LLI_HT-MLI_MT",
+               "LLI_LT-MLI_HT", "LLI_MT-MLI_HT", "LLI_HT-MLI_HT",
+               "LLI_MT-LLI_LT", "LLI_HT-LLI_LT",
+               "LLI_HT-LLI_MT")
+
+contrast.matrix <- makeContrasts(contrasts = contrasts,
+                                 levels=design)
+
+fits <- contrasts.fit(fit, contrast.matrix)
+ebFit <- eBayes(fits)
+
+# comp 1
+myTopHits_1 <- topTable(ebFit, adjust ="BH", coef=1, number=40000, sort.by="logFC")
+myTopHits_1.df <- myTopHits_1 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_1.df, paste0("tables/all_DEGs/comparison_", "1", ".tsv"))
+# comp 2
+myTopHits_2 <- topTable(ebFit, adjust ="BH", coef=2, number=40000, sort.by="logFC")
+myTopHits_2.df <- myTopHits_2 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_2.df, paste0("tables/all_DEGs/comparison_", "2", ".tsv"))
+# comp 3
+myTopHits_3 <- topTable(ebFit, adjust ="BH", coef=3, number=40000, sort.by="logFC")
+myTopHits_3.df <- myTopHits_3 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_3.df, paste0("tables/all_DEGs/comparison_", "3", ".tsv"))
+# comp 4
+myTopHits_4 <- topTable(ebFit, adjust ="BH", coef=4, number=40000, sort.by="logFC")
+myTopHits_4.df <- myTopHits_4 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_4.df, paste0("tables/all_DEGs/comparison_", "4", ".tsv"))
+# comp 5
+myTopHits_5 <- topTable(ebFit, adjust ="BH", coef=5, number=40000, sort.by="logFC")
+myTopHits_5.df <- myTopHits_5 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_5.df, paste0("tables/all_DEGs/comparison_", "5", ".tsv"))
+# comp 6
+myTopHits_6 <- topTable(ebFit, adjust ="BH", coef=6, number=40000, sort.by="logFC")
+myTopHits_6.df <- myTopHits_6 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_6.df, paste0("tables/all_DEGs/comparison_", "6", ".tsv"))
+# comp 7
+myTopHits_7 <- topTable(ebFit, adjust ="BH", coef=7, number=40000, sort.by="logFC")
+myTopHits_7.df <- myTopHits_7 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_7.df, paste0("tables/all_DEGs/comparison_", "7", ".tsv"))
+# comp 8
+myTopHits_8 <- topTable(ebFit, adjust ="BH", coef=8, number=40000, sort.by="logFC")
+myTopHits_8.df <- myTopHits_8 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_8.df, paste0("tables/all_DEGs/comparison_", "8", ".tsv"))
+# comp 9
+myTopHits_9 <- topTable(ebFit, adjust ="BH", coef=9, number=40000, sort.by="logFC")
+myTopHits_9.df <- myTopHits_9 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_9.df, paste0("tables/all_DEGs/comparison_", "9", ".tsv"))
+# comp 10
+myTopHits_10 <- topTable(ebFit, adjust ="BH", coef=10, number=40000, sort.by="logFC")
+myTopHits_10.df <- myTopHits_10 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_10.df, paste0("tables/all_DEGs/comparison_", "10", ".tsv"))
+# comp 11
+myTopHits_11 <- topTable(ebFit, adjust ="BH", coef=11, number=40000, sort.by="logFC")
+myTopHits_11.df <- myTopHits_11 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_11.df, paste0("tables/all_DEGs/comparison_", "11", ".tsv"))
+# comp 12
+myTopHits_12 <- topTable(ebFit, adjust ="BH", coef=12, number=40000, sort.by="logFC")
+myTopHits_12.df <- myTopHits_12 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_12.df, paste0("tables/all_DEGs/comparison_", "12", ".tsv"))
+# comp 13
+myTopHits_13 <- topTable(ebFit, adjust ="BH", coef=13, number=40000, sort.by="logFC")
+myTopHits_13.df <- myTopHits_13 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_13.df, paste0("tables/all_DEGs/comparison_", "13", ".tsv"))
+# comp 14
+myTopHits_14 <- topTable(ebFit, adjust ="BH", coef=14, number=40000, sort.by="logFC")
+myTopHits_14.df <- myTopHits_14 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_14.df, paste0("tables/all_DEGs/comparison_", "14", ".tsv"))
+# comp 15
+myTopHits_15 <- topTable(ebFit, adjust ="BH", coef=15, number=40000, sort.by="logFC")
+myTopHits_15.df <- myTopHits_15 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_15.df, paste0("tables/all_DEGs/comparison_", "15", ".tsv"))
+# comp 16
+myTopHits_16 <- topTable(ebFit, adjust ="BH", coef=16, number=40000, sort.by="logFC")
+myTopHits_16.df <- myTopHits_16 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_16.df, paste0("tables/all_DEGs/comparison_", "16", ".tsv"))
+# comp 17
+myTopHits_17 <- topTable(ebFit, adjust ="BH", coef=17, number=40000, sort.by="logFC")
+myTopHits_17.df <- myTopHits_17 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_17.df, paste0("tables/all_DEGs/comparison_", "17", ".tsv"))
+# comp 18
+myTopHits_18 <- topTable(ebFit, adjust ="BH", coef=18, number=40000, sort.by="logFC")
+myTopHits_18.df <- myTopHits_18 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_18.df, paste0("tables/all_DEGs/comparison_", "18", ".tsv"))
+# comp 19
+myTopHits_19 <- topTable(ebFit, adjust ="BH", coef=19, number=40000, sort.by="logFC")
+myTopHits_19.df <- myTopHits_19 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_19.df, paste0("tables/all_DEGs/comparison_", "19", ".tsv"))
+# comp 20
+myTopHits_20 <- topTable(ebFit, adjust ="BH", coef=20, number=40000, sort.by="logFC")
+myTopHits_20.df <- myTopHits_20 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_20.df, paste0("tables/all_DEGs/comparison_", "20", ".tsv"))
+# comp 21
+myTopHits_21 <- topTable(ebFit, adjust ="BH", coef=21, number=40000, sort.by="logFC")
+myTopHits_21.df <- myTopHits_21 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_21.df, paste0("tables/all_DEGs/comparison_", "21", ".tsv"))
+# comp 22
+myTopHits_22 <- topTable(ebFit, adjust ="BH", coef=22, number=40000, sort.by="logFC")
+myTopHits_22.df <- myTopHits_22 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_22.df, paste0("tables/all_DEGs/comparison_", "22", ".tsv"))
+# comp 23
+myTopHits_23 <- topTable(ebFit, adjust ="BH", coef=23, number=40000, sort.by="logFC")
+myTopHits_23.df <- myTopHits_23 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_23.df, paste0("tables/all_DEGs/comparison_", "23", ".tsv"))
+# comp 24
+myTopHits_24 <- topTable(ebFit, adjust ="BH", coef=24, number=40000, sort.by="logFC")
+myTopHits_24.df <- myTopHits_24 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_24.df, paste0("tables/all_DEGs/comparison_", "24", ".tsv"))
+# comp 25
+myTopHits_25 <- topTable(ebFit, adjust ="BH", coef=25, number=40000, sort.by="logFC")
+myTopHits_25.df <- myTopHits_25 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_25.df, paste0("tables/all_DEGs/comparison_", "25", ".tsv"))
+# comp 26
+myTopHits_26 <- topTable(ebFit, adjust ="BH", coef=26, number=40000, sort.by="logFC")
+myTopHits_26.df <- myTopHits_26 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_26.df, paste0("tables/all_DEGs/comparison_", "26", ".tsv"))
+# comp 27
+myTopHits_27 <- topTable(ebFit, adjust ="BH", coef=27, number=40000, sort.by="logFC")
+myTopHits_27.df <- myTopHits_27 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_27.df, paste0("tables/all_DEGs/comparison_", "27", ".tsv"))
+# comp 28
+myTopHits_28 <- topTable(ebFit, adjust ="BH", coef=28, number=40000, sort.by="logFC")
+myTopHits_28.df <- myTopHits_28 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_28.df, paste0("tables/all_DEGs/comparison_", "28", ".tsv"))
+# comp 29
+myTopHits_29 <- topTable(ebFit, adjust ="BH", coef=29, number=40000, sort.by="logFC")
+myTopHits_29.df <- myTopHits_29 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_29.df, paste0("tables/all_DEGs/comparison_", "29", ".tsv"))
+# comp 30
+myTopHits_30 <- topTable(ebFit, adjust ="BH", coef=30, number=40000, sort.by="logFC")
+myTopHits_30.df <- myTopHits_30 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_30.df, paste0("tables/all_DEGs/comparison_", "30", ".tsv"))
+# comp 31
+myTopHits_31 <- topTable(ebFit, adjust ="BH", coef=31, number=40000, sort.by="logFC")
+myTopHits_31.df <- myTopHits_31 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_31.df, paste0("tables/all_DEGs/comparison_", "31", ".tsv"))
+# comp 32
+myTopHits_32 <- topTable(ebFit, adjust ="BH", coef=32, number=40000, sort.by="logFC")
+myTopHits_32.df <- myTopHits_32 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_32.df, paste0("tables/all_DEGs/comparison_", "32", ".tsv"))
+# comp 33
+myTopHits_33 <- topTable(ebFit, adjust ="BH", coef=33, number=40000, sort.by="logFC")
+myTopHits_33.df <- myTopHits_33 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_33.df, paste0("tables/all_DEGs/comparison_", "33", ".tsv"))
+# comp 34
+myTopHits_34 <- topTable(ebFit, adjust ="BH", coef=34, number=40000, sort.by="logFC")
+myTopHits_34.df <- myTopHits_34 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_34.df, paste0("tables/all_DEGs/comparison_", "34", ".tsv"))
+# comp 35
+myTopHits_35 <- topTable(ebFit, adjust ="BH", coef=35, number=40000, sort.by="logFC")
+myTopHits_35.df <- myTopHits_35 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_35.df, paste0("tables/all_DEGs/comparison_", "35", ".tsv"))
+# comp 36
+myTopHits_36 <- topTable(ebFit, adjust ="BH", coef=36, number=40000, sort.by="logFC")
+myTopHits_36.df <- myTopHits_36 %>%
+  as_tibble(rownames = "geneID")
+write_tsv(myTopHits_36.df, paste0("tables/all_DEGs/comparison_", "36", ".tsv"))
+
+
+
+results <- decideTests(ebFit, method="global", adjust.method="BH", p.value=0.01, lfc=1)
+results.df <- as.data.frame(results)
+colnames(v.DEGList.filtered.norm$E) <- sampleLabels
+
+num_up <- list()
+num_down <- list()
+num_total <- list()
+
+for (contrast in seq(1,36, by=1)){
+    num_up <- append(x = num_up, values = sum(results[,contrast]==1))
+    num_down <- append(x = num_down, values = sum(results[,contrast]==-1))
+    num_total <- append(x = num_total, values = sum(abs(results[,contrast]!=0)))
+}
+
+up= matrix(0, 9, 9)
+up[lower.tri(up, diag=FALSE)] <- unlist(num_up)
+up <- t(up)
+up
+up.df <- as.data.frame(up)
+colnames(up.df) <- c("HLI_LT", "HLI_MT", "HLI_HT", "MLI_LT", "MLI_MT", "MLI_HT", "LLI_LT", "LLI_MT", "LLI_HT")
+rownames(up.df) <- c("HLI_LT", "HLI_MT", "HLI_HT", "MLI_LT", "MLI_MT", "MLI_HT", "LLI_LT", "LLI_MT", "LLI_HT")
+up.df_ggplot.df <- up.df %>%
+    dplyr::mutate(var1 = row.names(.)) %>%
+    tidyr::gather("var2", "value", -var1)
+#set vector of levels you want
+mylevels <- rev(c("HLI_LT", "HLI_MT", "HLI_HT", "MLI_LT", "MLI_MT", "MLI_HT", "LLI_LT", "LLI_MT", "LLI_HT"))
+
+#reorder factors
+up.df_ggplot.df$var1 <- factor(up.df_ggplot.df$var1,levels=mylevels)
+up.df_ggplot.df$var2 <- factor(up.df_ggplot.df$var2, levels=mylevels)
+
+pdf(file = "plots/all_DEGs/up_regulated_genes_with_numbers.pdf",   # The directory you want to save the file in
+    width = 19, # The width of the plot in inches
+    height = 19) # The height of the plot in inches
+
+ggplot(up.df_ggplot.df, aes(var1, var2)) + 
+  geom_tile(aes(fill = value), colour = "white") + 
+  scale_fill_gradient(low = "#d49098", high = "#fc2320") + 
+  scale_x_discrete(expand = c(0, 0)) + 
+  scale_y_discrete(expand = c(0, 0)) + 
+  labs(x=NULL, y=NULL) + 
+    geom_text(aes(label = value), color = "white", size = 4) +
+  theme(axis.ticks = element_blank(), 
+        axis.text.x = element_text(angle = 60, hjust = 1))+
+    coord_fixed()
+
+dev.off()
+
+
+down= matrix(0, 9, 9)
+down[lower.tri(down, diag=FALSE)] <- unlist(num_down)
+down <- t(down)
+down
+down.df <- as.data.frame(down)
+colnames(down.df) <- c("HLI_LT", "HLI_MT", "HLI_HT", "MLI_LT", "MLI_MT", "MLI_HT", "LLI_LT", "LLI_MT", "LLI_HT")
+rownames(down.df) <- c("HLI_LT", "HLI_MT", "HLI_HT", "MLI_LT", "MLI_MT", "MLI_HT", "LLI_LT", "LLI_MT", "LLI_HT")
+down.df_ggplot.df <- down.df %>%
+    dplyr::mutate(var1 = row.names(.)) %>%
+    tidyr::gather("var2", "value", -var1)
+#set vector of levels you want
+mylevels <- rev(c("HLI_LT", "HLI_MT", "HLI_HT", "MLI_LT", "MLI_MT", "MLI_HT", "LLI_LT", "LLI_MT", "LLI_HT"))
+
+#reorder factors
+down.df_ggplot.df$var1 <- factor(down.df_ggplot.df$var1,levels=mylevels)
+down.df_ggplot.df$var2 <- factor(down.df_ggplot.df$var2, levels=mylevels)
+
+pdf(file = "plots/all_DEGs/down_regulated_genes_with_numbers.pdf",   # The directory you want to save the file in
+    width = 19, # The width of the plot in inches
+    height = 19) # The height of the plot in inches
+
+ggplot(down.df_ggplot.df, aes(var1, var2)) + 
+  geom_tile(aes(fill = value), colour = "white") + 
+  scale_fill_gradient(low = "#caf0f8", high = "#4ab0d3") + 
+  scale_x_discrete(expand = c(0, 0)) + 
+  scale_y_discrete(expand = c(0, 0)) + 
+  labs(x=NULL, y=NULL) + 
+        geom_text(aes(label = value), color = "black", size = 4) +
+  theme(axis.ticks = element_blank(), 
+        axis.text.x = element_text(angle = 60, hjust = 1))+
+    coord_fixed()
+
+dev.off()
+
+pdf(file = "plots/all_DEGs/down_regulated_genes.pdf",   # The directory you want to save the file in
+    width = 19, # The width of the plot in inches
+    height = 19) # The height of the plot in inches
+
+ggplot(down.df_ggplot.df, aes(var1, var2)) + 
+  geom_tile(aes(fill = value), colour = "white") + 
+  scale_fill_gradient(low = "#caf0f8", high = "#4ab0d3") + 
+  scale_x_discrete(expand = c(0, 0)) + 
+  scale_y_discrete(expand = c(0, 0)) + 
+  labs(x=NULL, y=NULL) + 
+        geom_text(aes(label = value), color = "black", size = 4) +
+  theme(axis.ticks = element_blank(), 
+        axis.text.x = element_text(angle = 60, hjust = 1))+
+    coord_fixed()
+
+dev.off()
+
+
+total= matrix(0, 9, 9)
+total[upper.tri(total, diag=FALSE)] <- unlist(num_total)
+total <- t(total)
+total
+total.df <- as.data.frame(total)
+colnames(total.df) <- c("HLI_LT", "HLI_MT", "HLI_HT", "MLI_LT", "MLI_MT", "MLI_HT", "LLI_LT", "LLI_MT", "LLI_HT")
+rownames(total.df) <- c("HLI_LT", "HLI_MT", "HLI_HT", "MLI_LT", "MLI_MT", "MLI_HT", "LLI_LT", "LLI_MT", "LLI_HT")
+total.df_ggplot.df <- total.df %>%
+    dplyr::mutate(var1 = row.names(.)) %>%
+    tidyr::gather("var2", "value", -var1)
+#set vector of levels you want
+mylevels <- rev(c("HLI_LT", "HLI_MT", "HLI_HT", "MLI_LT", "MLI_MT", "MLI_HT", "LLI_LT", "LLI_MT", "LLI_HT"))
+
+#reorder factors
+total.df_ggplot.df$var1 <- factor(total.df_ggplot.df$var1,levels=mylevels)
+total.df_ggplot.df$var2 <- factor(total.df_ggplot.df$var2, levels=mylevels)
+
+pdf(file = "plots/all_DEGs/all_regulated_genes_with_numbers.pdf",   # The directory you want to save the file in
+    width = 19, # The width of the plot in inches
+    height = 19) # The height of the plot in inches
+
+ggplot(total.df_ggplot.df, aes(var1, var2)) + 
+  geom_tile(aes(fill = value), colour = "white") + 
+  scale_fill_gradient(low = "#FFE8C2", high = "#F59700") +
+  scale_x_discrete(expand = c(0, 0)) + 
+  scale_y_discrete(expand = c(0, 0)) + 
+  labs(x=NULL, y=NULL) + 
+    geom_text(aes(label = value), color = "black", size = 4) +
+  theme(axis.ticks = element_blank(), 
+        axis.text.x = element_text(angle = 60, hjust = 1))+
+    coord_fixed()
+
+dev.off()
+
+pdf(file = "plots/all_DEGs/all_regulated_genes.pdf",   # The directory you want to save the file in
+    width = 19, # The width of the plot in inches
+    height = 19) # The height of the plot in inches
+
+ggplot(total.df_ggplot.df, aes(var1, var2)) + 
+  geom_tile(aes(fill = value), colour = "white") + 
+  scale_fill_gradient(low = "#FFE8C2", high = "#F59700") +
+  scale_x_discrete(expand = c(0, 0)) + 
+  scale_y_discrete(expand = c(0, 0)) + 
+  labs(x=NULL, y=NULL) + 
+  theme(axis.ticks = element_blank(), 
+        axis.text.x = element_text(angle = 60, hjust = 1))+
+    coord_fixed()
+
+dev.off()
+```
+
+```{r session info}
+sessionInfo()
+```

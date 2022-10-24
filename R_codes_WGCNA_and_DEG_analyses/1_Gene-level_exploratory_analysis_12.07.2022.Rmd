@@ -1,0 +1,479 @@
+---
+title: "<center> Response to a gradient of environmental cues in mesotaenium endlicherianum - Gene-level exploratory analysis<center>"
+author: "<center> Armin Dadras <center><br>"
+date: "<center> _`r Sys.Date()`_ <center>"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    theme: yeti
+    highlight: tango
+    toc: yes
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    number_sections: true
+  pdf_document:
+    fig_caption: yes
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+library(rmarkdown)
+library(tinytex)
+library(knitr)
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+```
+
+------------------------------------------------------------------------
+
+# Importing data into R
+
+After read mapping with HISAT2, [TxImport](https://bioconductor.org/packages/release/bioc/html/tximport.html) was used to read Stringtie outputs into the R environment. Annotation data was used to summarize data from transcript-level to gene-level.
+
+```{r Step 1: Importing count data into R}
+library(tidyverse) # provides access to Hadley Wickham's collection of R packages for data science
+library(tximport)
+library(edgeR)
+library(matrixStats)
+library(cowplot)
+library(rhdf5)
+
+targets <- read.csv("study_design.csv", header = T)
+
+sampleLabels <- targets$sample_name
+path <- file.path("kallisto",paste0(targets$sample_id), "abundance.h5") 
+#check if files exist for all samples in study design file
+Tx <- read_tsv("tx2gene.tsv")
+
+Txi_gene <- tximport(path,
+         type = "kallisto",
+         countsFromAbundance = "lengthScaledTPM",
+         tx2gene = Tx,
+         txOut = F,
+         ignoreTxVersion = F)
+```
+
+------------------------------------------------------------------------
+
+# Preprocessing
+
+## Impact of filtering and normalization
+
+The abundance data are TPM, while the counts are read counts mapping to each gene or transcript.
+
+```{r Step 2: Impact of filtering and normalization}
+myDGEList <- DGEList(Txi_gene$counts) # Make a DGElist from the counts
+log2.cpm <- cpm(myDGEList, log=TRUE) # use the 'cpm' function from EdgeR to get counts per million
+log2.cpm.df <- as_tibble(log2.cpm, rownames = "geneID")
+colnames(log2.cpm.df) <- c("geneID", sampleLabels)
+log2.cpm.df.pivot <- pivot_longer(log2.cpm.df, # dataframe to be pivoted
+                                  cols = 2:(length(sampleLabels)+1), # column names to be stored as a SINGLE variable
+                                  names_to = "samples", # name of that new variable (column)
+                                  values_to = "expression") # name of new variable (column) storing all the values (data)
+
+p1 <- ggplot(log2.cpm.df.pivot) +
+  aes(x=samples, y=expression, fill=samples) +
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun = "median",
+               geom = "point",
+               shape = 95,
+               size = 10,
+               color = "black",
+               show.legend = FALSE) +
+  labs(y="log2 expression", x = "sample",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="unfiltered, non-normalized",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90),
+        plot.title = element_text(size = 8),
+        plot.subtitle = element_text(size = 6))
+
+# Filter myDGEList
+cpm <- cpm(myDGEList)
+# The line below is important! This is where the filtering starts
+#keepers <- ((rowMeans2(cpm) >= 1) & (rowSds(cpm) >= 1)) # This one is for wTO 
+keepers <- rowSums(cpm>1)>=3 #user defined
+myDGEList.filtered <- myDGEList[keepers,]
+
+log2.cpm.filtered <- cpm(myDGEList.filtered, log=TRUE)
+log2.cpm.filtered.df <- as_tibble(log2.cpm.filtered, rownames = "geneID")
+colnames(log2.cpm.filtered.df) <- c("geneID", sampleLabels)
+log2.cpm.filtered.df.pivot <- pivot_longer(log2.cpm.filtered.df, # dataframe to be pivoted
+                                           cols = 2:(length(sampleLabels)+1), # column names to be stored as a SINGLE variable
+                                           names_to = "samples", # name of that new variable (column)
+                                           values_to = "expression") # name of new variable (column) storing all the values (data)
+
+p2 <- ggplot(log2.cpm.filtered.df.pivot) +
+  aes(x=samples, y=expression, fill=samples) +
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun = "median",
+               geom = "point",
+               shape = 95,
+               size = 10,
+               color = "black",
+               show.legend = FALSE) +
+  labs(y="log2 expression", x = "sample",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="filtered, non-normalized",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90),
+        plot.title = element_text(size = 8),
+        plot.subtitle = element_text(size = 6))
+
+# Normalize the data
+myDGEList.filtered.norm <- calcNormFactors(myDGEList.filtered, method = "TMM")
+log2.cpm.filtered.norm <- cpm(myDGEList.filtered.norm, log=TRUE)
+log2.cpm.filtered.norm.df <- as_tibble(log2.cpm.filtered.norm, rownames = "geneID")
+colnames(log2.cpm.filtered.norm.df) <- c("geneID", sampleLabels)
+log2.cpm.filtered.norm.df.pivot <- pivot_longer(log2.cpm.filtered.norm.df, # dataframe to be pivoted
+                                                cols = 2:(length(sampleLabels)+1), # column names to be stored as a SINGLE variable
+                                                names_to = "samples", # name of that new variable (column)
+                                                values_to = "expression") # name of new variable (column) storing all the values (data)
+
+p3 <- ggplot(log2.cpm.filtered.norm.df.pivot) +
+  aes(x=samples, y=expression, fill=samples) +
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun = "median",
+               geom = "point",
+               shape = 95,
+               size = 10,
+               color = "black",
+               show.legend = FALSE) +
+  labs(y="log2 expression", x = "sample",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="filtered, TMM normalized",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90),
+        plot.title = element_text(size = 8),
+        plot.subtitle = element_text(size = 6))
+
+ggsave(filename = "plots/impact_of_filtering_and_normalization.pdf", plot_grid(p1, p2, p3, labels = c('A', 'B', 'C'), label_size = 12, ncol = 3, align = "hv"), width = 20, height = 20)
+plot_grid(p1, p2, p3, labels = c('A', 'B', 'C'), label_size = 12, ncol = 3, align = "hv")
+
+```
+
+------------------------------------------------------------------------
+
+Filtering was carried out to remove lowly expressed genes. Genes with less than 1 count per million (CPM) in at least 3 or more samples filtered out. This reduced the number of genes from `r nrow(myDGEList)` to `r nrow(myDGEList.filtered.norm)`.
+
+------------------------------------------------------------------------
+
+## Table of filtered and normalized data
+
+The table that includes expression data for `r nrow(myDGEList.filtered.norm)` genes are saved in`tables/filtered_and_TMM_normalized_counts.tsv`.
+
+------------------------------------------------------------------------
+
+```{r Step 3: Table of filtered and normalized data}
+mydata.df <- log2.cpm.filtered.norm.df %>%
+  mutate_if(is.numeric, round, 2)
+
+write_tsv(mydata.df, "tables/filtered_and_TMM_normalized_counts.tsv")
+```
+
+------------------------------------------------------------------------
+
+# Model the mean-variance relationship
+
+```{r Step 5.1: Model the mean-variance relationship}
+library(limma)
+library(gt)
+library(DT)
+library(plotly)
+
+group <- targets$group
+group <- factor(group)
+
+design <- model.matrix(~0 + group)
+colnames(design) <- c(levels(group))
+
+colnames(myDGEList.filtered.norm) <- sampleLabels
+# Use VOOM function from Limma package to model the mean-variance relationship
+v.DEGList.filtered.norm <- voom(myDGEList.filtered.norm, design, plot = TRUE)
+v.DEGList.filtered.norm_E.df <- as_tibble(v.DEGList.filtered.norm$E, rownames = "geneID")
+write_tsv(v.DEGList.filtered.norm_E.df, "tables/normalized_expression_values_on_the_log2_scale.tsv")
+save(v.DEGList.filtered.norm, file = "log2_expression_voom.RData")
+```
+
+------------------------------------------------------------------------
+
+## PCA plot
+
+```{r Step 4.1: PCA plot}
+#hierarchical clustering can only work on a data matrix, not a data frame
+distance <- dist(t(v.DEGList.filtered.norm$E), method = "euclidean") #other distance methods are "euclidean", maximum", "manhattan", "canberra", "binary" or "minkowski"
+clusters <- hclust(distance, method = "complete") #other agglomeration methods are "ward.D", "ward.D2", "single", "complete", "average", "mcquitty", "median", or "centroid"
+plot(clusters, labels=sampleLabels)
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/distance_clustering.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+plot(clusters, labels=sampleLabels)
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+------------------------------------------------------------------------
+
+## Table of variance summary for PCs
+
+```{r Step 4.2: Table of variance summary for all PCs}
+library(DT)
+pca.res <- prcomp(t(v.DEGList.filtered.norm$E), scale.=F, retx=T)
+
+pca_summary <- summary(pca.res) # variance summary for all principal components.
+datatable(pca_summary$importance,
+          extensions = c('KeyTable', "FixedHeader"),
+          filter = 'top',
+          options = list(keys = TRUE,
+                         searchHighlight = TRUE,
+                         pageLength = 10,
+                         lengthMenu = c("10", "25", "50", "100")))
+pca_summary.df <- as_tibble(pca_summary$importance, rownames = "NA")
+write_tsv(pca_summary.df, "tables/pca_summary_importance.tsv")
+```
+
+------------------------------------------------------------------------
+
+## Interactive plot of PC1 and PC2
+
+In this interactive plot, I visualize how samples are distributed across PC1 and PC2. Move pointer over each point to get the information about each of them.
+
+```{r Step 4.3: Interactive plot of PC1 and PC2}
+light_intensity <- targets$light_intensity_group
+light_intensity <- factor(light_intensity)
+temperature <- targets$temperature_group
+temperature <- factor(temperature)
+
+library(plotly)
+pca.res <- prcomp(t(v.DEGList.filtered.norm$E), scale.=F, retx=T)
+pc.var<-pca.res$sdev^2 # sdev^2 captures these eigenvalues from the PCA result
+pc.per<-round(pc.var/sum(pc.var)*100, 1)
+pca.res.df <- as_tibble(pca.res$x)
+
+pca.plot <- ggplot(pca.res.df) +
+  aes(x=PC1, y=PC2, label=sampleLabels, shape = light_intensity, color = temperature) +
+  geom_point(size=4) +
+  stat_ellipse() +
+  xlab(paste0("PC1 (",pc.per[1],"%",")")) +
+  ylab(paste0("PC2 (",pc.per[2],"%",")")) +
+  labs(title="PCA plot",
+       caption=paste0("produced on ", Sys.time())) +
+  coord_fixed() +
+  theme_bw()
+ggsave(filename = "plots/PCA_beautiful.pdf", pca.plot, width = 15, height = 15)
+
+pca.plot <- ggplot(pca.res.df) +
+  aes(x=PC1, y=PC2, label=sampleLabels, shape = light_intensity, color = temperature) +
+  geom_point(size=4) +
+  geom_label() +
+  stat_ellipse() +
+  xlab(paste0("PC1 (",pc.per[1],"%",")")) +
+  ylab(paste0("PC2 (",pc.per[2],"%",")")) +
+  labs(title="PCA plot",
+       caption=paste0("produced on ", Sys.time())) +
+  coord_fixed() +
+  theme_bw()
+ggsave(filename = "plots/PCA.pdf", pca.plot, width = 15, height = 15)
+
+ggplotly(pca.plot)
+
+```
+
+```{r Step 4.4: Create a PCA 'small multiples' chart}
+light_intensity <- targets$light_intensity_group
+light_intensity <- factor(light_intensity)
+temperature <- targets$temperature_group
+temperature <- factor(temperature)
+sequencing <- targets$Sequencing
+sequencing <- factor(sequencing)
+replicates <- targets$replicate
+replicates <- factor(replicates)
+
+# Light intensity
+pca.res.df <- pca.res$x[,1:6] %>% # note that this is the first time you've seen the 'pipe' operator from the magrittr package
+  as_tibble() %>%
+  add_column(sample = sampleLabels,
+             light = light_intensity)
+  
+pca.pivot <- pivot_longer(pca.res.df, # dataframe to be pivoted
+                          cols = PC1:PC6, # column names to be stored as a SINGLE variable
+                          names_to = "PC", # name of that new variable (column)
+                          values_to = "loadings") # name of new variable (column) storing all the values (data)
+
+ggplot(pca.pivot) +
+  aes(x=sample, y=loadings, fill=light) + # you could iteratively 'paint' different covariates onto this plot using the 'fill' aes
+  geom_bar(stat="identity") +
+  facet_wrap(~PC) +
+  labs(title="PCA 'small multiples' plot - light intensity",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw() +
+  coord_flip()+
+    theme(axis.text.y = element_text(size=2)) 
+
+p <- ggplot(pca.pivot) +
+  aes(x=sample, y=loadings, fill=light) + # you could iteratively 'paint' different covariates onto this plot using the 'fill' aes
+  geom_bar(stat="identity") +
+  facet_wrap(~PC) +
+  labs(title="PCA 'small multiples' plot - light intensity",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw() +
+  coord_flip()+
+    theme(axis.text.y = element_text(size=2)) 
+
+ggsave(filename = "plots/PCA_small_multiples_light_intensity.pdf", p, width = 21, height = 21)
+# Temperature
+pca.res.df <- pca.res$x[,1:6] %>% # note that this is the first time you've seen the 'pipe' operator from the magrittr package
+  as_tibble() %>%
+  add_column(sample = sampleLabels,
+             temperature = temperature)
+  
+pca.pivot <- pivot_longer(pca.res.df, # dataframe to be pivoted
+                          cols = PC1:PC6, # column names to be stored as a SINGLE variable
+                          names_to = "PC", # name of that new variable (column)
+                          values_to = "loadings") # name of new variable (column) storing all the values (data)
+
+ggplot(pca.pivot) +
+  aes(x=sample, y=loadings, fill=temperature) + # you could iteratively 'paint' different covariates onto this plot using the 'fill' aes
+  geom_bar(stat="identity") +
+  facet_wrap(~PC) +
+  labs(title="PCA 'small multiples' plot - Temperature",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw() +
+  coord_flip()+
+    theme(axis.text.y = element_text(size=2))
+
+p <- ggplot(pca.pivot) +
+  aes(x=sample, y=loadings, fill=temperature) + # you could iteratively 'paint' different covariates onto this plot using the 'fill' aes
+  geom_bar(stat="identity") +
+  facet_wrap(~PC) +
+  labs(title="PCA 'small multiples' plot - Temperature",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw() +
+  coord_flip()+
+    theme(axis.text.y = element_text(size=2)) 
+
+ggsave(filename = "plots/PCA_small_multiples_temperature.pdf", p, width = 21, height = 21)
+# sequencing
+pca.res.df <- pca.res$x[,1:6] %>% # note that this is the first time you've seen the 'pipe' operator from the magrittr package
+  as_tibble() %>%
+  add_column(sample = sampleLabels,
+             seqs = sequencing)
+  
+pca.pivot <- pivot_longer(pca.res.df, # dataframe to be pivoted
+                          cols = PC1:PC6, # column names to be stored as a SINGLE variable
+                          names_to = "PC", # name of that new variable (column)
+                          values_to = "loadings") # name of new variable (column) storing all the values (data)
+
+ggplot(pca.pivot) +
+  aes(x=sample, y=loadings, fill=seqs) + # you could iteratively 'paint' different covariates onto this plot using the 'fill' aes
+  geom_bar(stat="identity") +
+  facet_wrap(~PC) +
+  labs(title="PCA 'small multiples' plot - Sequencing",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw() +
+  coord_flip()+
+    theme(axis.text.y = element_text(size=2))
+
+p <- ggplot(pca.pivot) +
+  aes(x=sample, y=loadings, fill=seqs) + # you could iteratively 'paint' different covariates onto this plot using the 'fill' aes
+  geom_bar(stat="identity") +
+  facet_wrap(~PC) +
+  labs(title="PCA 'small multiples' plot - Sequencing",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw() +
+  coord_flip()+
+    theme(axis.text.y = element_text(size=2))
+
+ggsave(filename = "plots/PCA_small_multiples_sequencing.pdf", p, width = 21, height = 21)
+# replicates
+pca.res.df <- pca.res$x[,1:6] %>% # note that this is the first time you've seen the 'pipe' operator from the magrittr package
+  as_tibble() %>%
+  add_column(sample = sampleLabels,
+             reps = replicates)
+  
+pca.pivot <- pivot_longer(pca.res.df, # dataframe to be pivoted
+                          cols = PC1:PC6, # column names to be stored as a SINGLE variable
+                          names_to = "PC", # name of that new variable (column)
+                          values_to = "loadings") # name of new variable (column) storing all the values (data)
+
+ggplot(pca.pivot) +
+  aes(x=sample, y=loadings, fill=reps) + # you could iteratively 'paint' different covariates onto this plot using the 'fill' aes
+  geom_bar(stat="identity") +
+  facet_wrap(~PC) +
+  labs(title="PCA 'small multiples' plot - Replicates",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw() +
+  coord_flip()+
+    theme(axis.text.y = element_text(size=2))
+
+p <- ggplot(pca.pivot) +
+  aes(x=sample, y=loadings, fill=reps) + # you could iteratively 'paint' different covariates onto this plot using the 'fill' aes
+  geom_bar(stat="identity") +
+  facet_wrap(~PC) +
+  labs(title="PCA 'small multiples' plot - Replicates",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw() +
+  coord_flip()+
+    theme(axis.text.y = element_text(size=2))
+
+ggsave(filename = "plots/PCA_small_multiples_replicates.pdf", p, width = 21, height = 21)
+```
+
+## Heatmaps of distance and correlation between samples
+
+```{r Step 4.X: Interactive plot of PC1 and PC2}
+library("pheatmap")
+#library(MetBrewer)
+#myheatcolors <- rev(met.brewer(name="Demuth", n=10))
+#myheatcolors <- c("#fd6967", "#d49098", "#b1abb9", "#96bcce", "#83c9e1")
+myheatcolors <- c("#fc2320", "#fc4644", "#fd6967", "#d49098", "#b1abb9", "#96bcce", "#83c9e1", "#67bdda", "#4ab0d3")
+
+
+sampleDistMatrix <- as.matrix( distance )
+rownames(sampleDistMatrix) <- paste( "LI: ", targets$light_intensity_group, "T: ", targets$temperature_group, sep = " " )
+colnames(sampleDistMatrix) <- paste( "LI: ", targets$light_intensity_group, "T: ", targets$temperature_group, sep = " " )
+distance_heatmap <- pheatmap(sampleDistMatrix,
+         clustering_distance_rows = distance,
+         clustering_distance_cols = distance,
+         col = myheatcolors)
+ggsave(filename = "plots/distance_heatmap.pdf", distance_heatmap, width = 30, height = 30)
+
+data <- v.DEGList.filtered.norm$E
+colnames(data) <- paste( "LI: ", targets$light_intensity_group, "T: ", targets$temperature_group, sep = " " )
+#myheatcolors2 <- met.brewer(name="Demuth", n=10)
+#myheatcolors2 <- c("#fd6967", "#d49098", "#b1abb9", "#96bcce", "#83c9e1")
+myheatcolors2 <- c("#4ab0d3", "#67bdda", "#83c9e1", "#96bcce", "#b1abb9", "#d49098", "#fd6967", "#fc4644", "#fc2320")
+
+
+spearman_cor_heatmap <- pheatmap(cor(data,method = "spearman"),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         col = myheatcolors2)
+ggsave(filename = "plots/spearman_cor_heatmap.pdf", spearman_cor_heatmap, width = 30, height = 30)
+
+#myheatcolors2 <- met.brewer(name="Demuth", n=10)
+pearson_cor_heatmap <- pheatmap(cor(data,method = "pearson"),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         col = myheatcolors2)
+ggsave(filename = "plots/pearson_cor_heatmap.pdf", pearson_cor_heatmap, width = 30, height = 30)
+```
+
+------------------------------------------------------------------------
+
+## Session info
+
+The output from running 'sessionInfo' is shown below and details all packages and version necessary to reproduce the results in this report.
+
+```{r session info}
+sessionInfo()
+```

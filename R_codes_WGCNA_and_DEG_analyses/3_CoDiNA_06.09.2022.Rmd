@@ -1,0 +1,205 @@
+---
+title: "<center> Response to a gradient of environmental cues in mesotaenium endlicherianum - Gene-level exploratory analysis<center>"
+author: "<center> Armin Dadras <center><br>"
+date: "<center> _`r Sys.Date()`_ <center>"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    theme: yeti
+    highlight: tango
+    toc: yes
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    number_sections: true
+  pdf_document:
+    fig_caption: yes
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+library(rmarkdown)
+library(tinytex)
+library(knitr)
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+```
+
+------------------------------------------------------------------------
+
+# Importing data into R
+
+```{r Step 1: Importing count data into R}
+library(tidyverse) # provides access to Hadley Wickham's collection of R packages for data science
+study_design <- read.csv("study_design.csv", header = T)
+
+load(file = "log2_expression_voom.RData")
+v.DEGList.filtered.norm_E.df <- as_tibble(v.DEGList.filtered.norm$E, rownames = "geneID")
+
+expr <- as.data.frame(round(v.DEGList.filtered.norm_E.df[,-1], digits = 4))
+rownames(expr) <- v.DEGList.filtered.norm_E.df$geneID
+#any(rowSds(as.matrix(expr)) == 0)
+```
+
+------------------------------------------------------------------------
+
+## Build the networks
+
+```{r Step 2: Build the networks}
+library(wTO)
+library(CoDiNA)
+library(parallel)
+
+LLI_LT_samples <- study_design %>%
+    filter(light_intensity_group %in% c("20.99", "39.2")) %>%
+    filter(temperature_group %in% c("8.37", "12.72")) %>%
+    select(sample_name)
+
+LLI_LT_expr <- expr[,LLI_LT_samples$sample_name] 
+LLI_LT_network <- LLI_LT_expr %>%
+    wTO.Complete(Data = .,
+                 k = 8,
+                 method = "p",
+                 pvalmethod = "BH",
+                 expected.diff = 0.2,
+                 n = 1000,
+                 method_resampling = "BlockBootstrap",
+                 ID = rep(1:4, 3))
+
+LLI_MT_samples <- study_design %>%
+    filter(light_intensity_group %in% c("20.99", "39.2")) %>%
+    filter(temperature_group %in% c("17.07", "20.63", "23.69")) %>%
+    select(sample_name)
+
+LLI_MT_expr <- expr[,LLI_MT_samples$sample_name] 
+LLI_MT_network <- LLI_MT_expr %>%
+    wTO.Complete(Data = .,
+                 k = 8,
+                 method = "p",
+                 pvalmethod = "BH",
+                 expected.diff = 0.2,
+                 n = 1000,
+                 method_resampling = "BlockBootstrap",
+                 ID = rep(1:4, 3))
+
+LLI_HT_samples <- study_design %>%
+    filter(light_intensity_group %in% c("20.99", "39.2")) %>%
+    filter(temperature_group %in% c("26.57", "29.22")) %>%
+    select(sample_name)
+
+LLI_HT_expr <- expr[,LLI_HT_samples$sample_name] 
+LLI_HT_network <- LLI_HT_expr %>%
+    wTO.Complete(Data = .,
+                 k = 8,
+                 method = "p",
+                 pvalmethod = "BH",
+                 expected.diff = 0.2,
+                 n = 1000,
+                 method_resampling = "BlockBootstrap",
+                 ID = rep(1:4, 3))
+
+MLI_LT_samples <- study_design %>%
+    filter(light_intensity_group %in% c("71.93", "129.6")) %>%
+    filter(temperature_group %in% c("8.37", "12.72")) %>%
+    select(sample_name)
+
+MLI_LT_expr <- expr[,MLI_LT_samples$sample_name] 
+MLI_LT_network <- MLI_LT_expr %>%
+    wTO.Complete(Data = .,
+                 k = 8,
+                 method = "p",
+                 pvalmethod = "BH",
+                 expected.diff = 0.2,
+                 n = 1000,
+                 method_resampling = "BlockBootstrap",
+                 ID = rep(1:4, 3))
+
+MLI_MT_samples <- study_design %>%
+    filter(light_intensity_group %in% c("71.93", "129.6")) %>%
+    filter(temperature_group %in% c("17.07", "20.63", "23.69")) %>%
+    select(sample_name)
+
+MLI_MT_expr <- expr[,MLI_MT_samples$sample_name] 
+MLI_MT_network <- MLI_MT_expr %>%
+    wTO.Complete(Data = .,
+                 k = 8,
+                 method = "p",
+                 pvalmethod = "BH",
+                 expected.diff = 0.2,
+                 n = 1000,
+                 method_resampling = "BlockBootstrap",
+                 ID = rep(1:4, 3))
+
+MLI_HT_samples <- study_design %>%
+    filter(light_intensity_group %in% c("71.93", "129.6")) %>%
+    filter(temperature_group %in% c("26.57", "29.22")) %>%
+    select(sample_name)
+
+MLI_HT_expr <- expr[,MLI_HT_samples$sample_name] 
+MLI_HT_network <- MLI_HT_expr %>%
+    wTO.Complete(Data = .,
+                 k = 8,
+                 method = "p",
+                 pvalmethod = "BH",
+                 expected.diff = 0.2,
+                 n = 1000,
+                 method_resampling = "BlockBootstrap",
+                 ID = rep(1:4, 3))
+
+HLI_LT_samples <- study_design %>%
+    filter(light_intensity_group %in% c("527.89", "329.83")) %>%
+    filter(temperature_group %in% c("8.37", "12.72")) %>%
+    select(sample_name)
+
+HLI_LT_expr <- expr[,HLI_LT_samples$sample_name] 
+HLI_LT_network <- HLI_LT_expr %>%
+    wTO.Complete(Data = .,
+                 k = 8,
+                 method = "p",
+                 pvalmethod = "BH",
+                 expected.diff = 0.2,
+                 n = 1000,
+                 method_resampling = "BlockBootstrap",
+                 ID = rep(1:4, 3))
+
+HLI_MT_samples <- study_design %>%
+    filter(light_intensity_group %in% c("527.89", "329.83")) %>%
+    filter(temperature_group %in% c("17.07", "20.63", "23.69")) %>%
+    select(sample_name)
+
+HLI_MT_expr <- expr[,HLI_MT_samples$sample_name] 
+HLI_MT_network <- HLI_MT_expr %>%
+    wTO.Complete(Data = .,
+                 k = 8,
+                 method = "p",
+                 pvalmethod = "BH",
+                 expected.diff = 0.2,
+                 n = 1000,
+                 method_resampling = "BlockBootstrap",
+                 ID = rep(1:4, 3))
+
+HLI_HT_samples <- study_design %>%
+    filter(light_intensity_group %in% c("527.89", "329.83")) %>%
+    filter(temperature_group %in% c("26.57", "29.22")) %>%
+    select(sample_name)
+
+HLI_HT_expr <- expr[,HLI_HT_samples$sample_name] 
+HLI_HT_network <- HLI_HT_expr %>%
+    wTO.Complete(Data = .,
+                 k = 8,
+                 method = "p",
+                 pvalmethod = "BH",
+                 expected.diff = 0.2,
+                 n = 1000,
+                 method_resampling = "BlockBootstrap",
+                 ID = rep(1:4, 3))
+```
+
+
+## Session info
+
+The output from running 'sessionInfo' is shown below and details all packages and version necessary to reproduce the results in this report.
+
+```{r session info}
+sessionInfo()
+```

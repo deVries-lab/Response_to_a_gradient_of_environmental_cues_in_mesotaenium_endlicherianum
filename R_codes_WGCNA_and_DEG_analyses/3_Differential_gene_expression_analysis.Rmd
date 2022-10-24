@@ -1,0 +1,1666 @@
+---
+title: "<center> Response to a gradient of environmental cues in mesotaenium endlicherianum<center>"
+author: "<center> Armin Dadras <center><br>"
+date: "<center> _`r Sys.Date()`_ <center>"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    theme: yeti
+    highlight: tango
+    toc: yes
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    number_sections: true
+  pdf_document:
+    fig_caption: yes
+    toc: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(rmarkdown)
+library(tinytex)
+library(knitr)
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+```
+
+------------------------------------------------------------------------
+
+# Importing data into R
+
+After read mapping with HISAT2, [TxImport](https://bioconductor.org/packages/release/bioc/html/tximport.html) was used to read Stringtie outputs into the R environment. Annotation data was used to summarize data from transcript-level to gene-level.
+
+```{r Step 1: Importing count data into R}
+library(tidyverse) # provides access to Hadley Wickham's collection of R packages for data science
+library(tximport)
+library(edgeR)
+library(matrixStats)
+library(cowplot)
+library(rhdf5)
+
+targets <- read.csv("study_design.csv", header = T)
+
+## Determine samples I am interested in
+#targets <- targets %>%
+#    filter(targets$condition_not_to_use %in% (c("standard_growth", "heat")))
+
+sampleLabels <- targets$sample_name
+path <- file.path("kallisto",paste0(targets$sample_id), "abundance.h5") 
+#check if files exist for all samples in study design file
+Tx <- read_tsv("tx2gene.tsv")
+
+Txi_gene <- tximport(path,
+         type = "kallisto",
+         countsFromAbundance = "lengthScaledTPM",
+         tx2gene = Tx,
+         txOut = F,
+         ignoreTxVersion = F)
+```
+
+------------------------------------------------------------------------
+
+# Preprocessing
+
+## Impact of filtering and normalization
+
+The abundance data are TPM, while the counts are read counts mapping to each gene or transcript.
+
+```{r Step 2: Impact of filtering and normalization}
+myDGEList <- DGEList(Txi_gene$counts) # Make a DGElist from the counts
+log2.cpm <- cpm(myDGEList, log=TRUE) # use the 'cpm' function from EdgeR to get counts per million
+log2.cpm.df <- as_tibble(log2.cpm, rownames = "geneID")
+colnames(log2.cpm.df) <- c("geneID", sampleLabels)
+log2.cpm.df.pivot <- pivot_longer(log2.cpm.df, # dataframe to be pivoted
+                                  cols = 2:(length(sampleLabels)+1), # column names to be stored as a SINGLE variable
+                                  names_to = "samples", # name of that new variable (column)
+                                  values_to = "expression") # name of new variable (column) storing all the values (data)
+
+p1 <- ggplot(log2.cpm.df.pivot) +
+  aes(x=samples, y=expression, fill=samples) +
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun = "median",
+               geom = "point",
+               shape = 95,
+               size = 10,
+               color = "black",
+               show.legend = FALSE) +
+  labs(y="log2 expression", x = "sample",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="unfiltered, non-normalized",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90),
+        plot.title = element_text(size = 8),
+        plot.subtitle = element_text(size = 6))
+
+# Filter myDGEList
+cpm <- cpm(myDGEList)
+# The line below is important! This is where the filtering starts
+keepers <- rowSums(cpm>1)>=3 #user defined
+myDGEList.filtered <- myDGEList[keepers,]
+
+log2.cpm.filtered <- cpm(myDGEList.filtered, log=TRUE)
+log2.cpm.filtered.df <- as_tibble(log2.cpm.filtered, rownames = "geneID")
+colnames(log2.cpm.filtered.df) <- c("geneID", sampleLabels)
+log2.cpm.filtered.df.pivot <- pivot_longer(log2.cpm.filtered.df, # dataframe to be pivoted
+                                           cols = 2:(length(sampleLabels)+1), # column names to be stored as a SINGLE variable
+                                           names_to = "samples", # name of that new variable (column)
+                                           values_to = "expression") # name of new variable (column) storing all the values (data)
+
+p2 <- ggplot(log2.cpm.filtered.df.pivot) +
+  aes(x=samples, y=expression, fill=samples) +
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun = "median",
+               geom = "point",
+               shape = 95,
+               size = 10,
+               color = "black",
+               show.legend = FALSE) +
+  labs(y="log2 expression", x = "sample",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="filtered, non-normalized",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90),
+        plot.title = element_text(size = 8),
+        plot.subtitle = element_text(size = 6))
+
+# Normalize the data
+myDGEList.filtered.norm <- calcNormFactors(myDGEList.filtered, method = "TMM")
+log2.cpm.filtered.norm <- cpm(myDGEList.filtered.norm, log=TRUE)
+log2.cpm.filtered.norm.df <- as_tibble(log2.cpm.filtered.norm, rownames = "geneID")
+colnames(log2.cpm.filtered.norm.df) <- c("geneID", sampleLabels)
+log2.cpm.filtered.norm.df.pivot <- pivot_longer(log2.cpm.filtered.norm.df, # dataframe to be pivoted
+                                                cols = 2:(length(sampleLabels)+1), # column names to be stored as a SINGLE variable
+                                                names_to = "samples", # name of that new variable (column)
+                                                values_to = "expression") # name of new variable (column) storing all the values (data)
+
+p3 <- ggplot(log2.cpm.filtered.norm.df.pivot) +
+  aes(x=samples, y=expression, fill=samples) +
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun = "median",
+               geom = "point",
+               shape = 95,
+               size = 10,
+               color = "black",
+               show.legend = FALSE) +
+  labs(y="log2 expression", x = "sample",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="filtered, TMM normalized",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90),
+        plot.title = element_text(size = 8),
+        plot.subtitle = element_text(size = 6))
+
+ggsave(filename = "plots/impact_of_filtering_and_normalization.pdf", plot_grid(p1, p2, p3, labels = c('A', 'B', 'C'), label_size = 12, ncol = 3, align = "hv"), width = 20, height = 20)
+plot_grid(p1, p2, p3, labels = c('A', 'B', 'C'), label_size = 12, ncol = 3, align = "hv")
+
+```
+
+------------------------------------------------------------------------
+
+Filtering was carried out to remove lowly expressed genes. Genes with less than 1 count per million (CPM) in at least 3 or more samples filtered out. This reduced the number of genes from `r nrow(myDGEList)` to `r nrow(myDGEList.filtered.norm)`.
+
+------------------------------------------------------------------------
+
+## Table of filtered and normalized data
+
+The table that includes expression data for `r nrow(myDGEList.filtered.norm)` genes are saved in`tables/heat/filtered_and_TMM_normalized_counts.tsv`.
+
+------------------------------------------------------------------------
+
+```{r Step 3: Table of filtered and normalized data}
+mydata.df <- log2.cpm.filtered.norm.df %>%
+  mutate_if(is.numeric, round, 2)
+
+write_tsv(mydata.df, "tables/filtered_and_TMM_normalized_counts.tsv")
+```
+
+------------------------------------------------------------------------
+
+# Model the mean-variance relationship
+
+```{r Step 5.1: Model the mean-variance relationship}
+library(limma)
+library(gt)
+library(DT)
+library(plotly)
+
+group <- targets$DEG_group
+group <- factor(group)
+group <- relevel(group, ref = "LLI_MT")
+
+design <- model.matrix(~0 + group)
+colnames(design) <- c(levels(group))
+colnames(myDGEList.filtered.norm) <- sampleLabels
+
+# Use VOOM function from Limma package to model the mean-variance relationship
+v.DEGList.filtered.norm <- voom(myDGEList.filtered.norm, design,
+                                plot = TRUE)
+v.DEGList.filtered.norm_E.df <- as_tibble(v.DEGList.filtered.norm$E,
+                                          rownames = "geneID")
+
+corfit <- duplicateCorrelation(v.DEGList.filtered.norm, ndups = 1, block = targets$biolrep)
+
+
+fit <- lmFit(v.DEGList.filtered.norm, design, block = targets$biolrep, cor = corfit$consensus)
+
+
+contrast.matrix <- makeContrasts(LLI_LT = (LLI_LT-LLI_MT),
+                                 MLI_LT = (MLI_LT-LLI_MT),
+                                 HLI_LT = (HLI_LT-LLI_MT),
+                                 MLI_MT = (MLI_MT-LLI_MT),
+                                 HLI_MT = (HLI_MT-LLI_MT),
+                                 LLI_HT = (LLI_HT-LLI_MT),
+                                 MLI_HT = (MLI_HT-LLI_MT),
+                                 HLI_HT = (HLI_HT-LLI_MT),
+                                 levels=design)
+
+fits <- contrasts.fit(fit, contrast.matrix)
+ebFit <- eBayes(fits)
+
+myTopHits_LLI_LT <- topTable(ebFit, adjust ="BH", coef=1, number=40000, sort.by="logFC")
+myTopHits_LLI_LT.df <- myTopHits_LLI_LT %>%
+  as_tibble(rownames = "geneID")
+
+myTopHits_MLI_LT <- topTable(ebFit, adjust ="BH", coef=2, number=40000, sort.by="logFC")
+myTopHits_MLI_LT.df <- myTopHits_MLI_LT %>%
+  as_tibble(rownames = "geneID")
+
+myTopHits_HLI_LT <- topTable(ebFit, adjust ="BH", coef=3, number=40000, sort.by="logFC")
+myTopHits_HLI_LT.df <- myTopHits_HLI_LT %>%
+  as_tibble(rownames = "geneID")
+
+myTopHits_MLI_MT <- topTable(ebFit, adjust ="BH", coef=4, number=40000, sort.by="logFC")
+myTopHits_MLI_MT.df <- myTopHits_MLI_MT %>%
+  as_tibble(rownames = "geneID")
+
+myTopHits_HLI_MT <- topTable(ebFit, adjust ="BH", coef=5, number=40000, sort.by="logFC")
+myTopHits_HLI_MT.df <- myTopHits_HLI_MT %>%
+  as_tibble(rownames = "geneID")
+
+myTopHits_LLI_HT <- topTable(ebFit, adjust ="BH", coef=6, number=40000, sort.by="logFC")
+myTopHits_LLI_HT.df <- myTopHits_LLI_HT %>%
+  as_tibble(rownames = "geneID")
+
+myTopHits_MLI_HT <- topTable(ebFit, adjust ="BH", coef=7, number=40000, sort.by="logFC")
+myTopHits_MLI_HT.df <- myTopHits_MLI_HT %>%
+  as_tibble(rownames = "geneID")
+
+myTopHits_HLI_HT <- topTable(ebFit, adjust ="BH", coef=8, number=40000, sort.by="logFC")
+myTopHits_HLI_HT.df <- myTopHits_HLI_HT %>%
+  as_tibble(rownames = "geneID")
+
+results <- decideTests(ebFit, method="global", adjust.method="BH", p.value=0.01, lfc=1)
+colnames(v.DEGList.filtered.norm$E) <- sampleLabels
+
+head(as.vector(targets %>%
+                   filter(DEG_group == "HLI_LT") %>%
+                   select(sample_name)))
+as.vector(targets %>%
+                   filter(DEG_group == "HLI_LT") %>%
+                   select(sample_name))
+unlist(targets %>%
+                   filter(DEG_group == "LLI_LT") %>%
+                   select(sample_name))
+
+diffGenes_LLI_LT <- v.DEGList.filtered.norm$E[results[,1] !=0, unlist(targets %>%
+                   filter(DEG_group %in% c("LLI_LT", "MLI_MT")) %>%
+                   select(sample_name))]
+diffGenes_MLI_LT <- v.DEGList.filtered.norm$E[results[,2] !=0, unlist(targets %>%
+                   filter(DEG_group %in% c("MLI_LT", "MLI_MT")) %>%
+                   select(sample_name))]
+diffGenes_HLI_LT <- v.DEGList.filtered.norm$E[results[,3] !=0, unlist(targets %>%
+                   filter(DEG_group %in% c("HLI_LT", "MLI_MT")) %>%
+                   select(sample_name))]
+diffGenes_MLI_MT <- v.DEGList.filtered.norm$E[results[,4] !=0, unlist(targets %>%
+                   filter(DEG_group %in% c("MLI_MT", "MLI_MT")) %>%
+                   select(sample_name))]
+diffGenes_HLI_MT <- v.DEGList.filtered.norm$E[results[,5] !=0, unlist(targets %>%
+                   filter(DEG_group %in% c("HLI_MT", "MLI_MT")) %>%
+                   select(sample_name))]
+diffGenes_LLI_HT <- v.DEGList.filtered.norm$E[results[,6] !=0, unlist(targets %>%
+                   filter(DEG_group %in% c("LLI_HT", "MLI_MT")) %>%
+                   select(sample_name))]
+diffGenes_MLI_HT <- v.DEGList.filtered.norm$E[results[,7] !=0, unlist(targets %>%
+                   filter(DEG_group %in% c("MLI_HT", "MLI_MT")) %>%
+                   select(sample_name))]
+diffGenes_HLI_HT <- v.DEGList.filtered.norm$E[results[,8] !=0, unlist(targets %>%
+                   filter(DEG_group %in% c("HLI_HT", "MLI_MT")) %>%
+                   select(sample_name))]
+
+
+diffGenes_LLI_LT.df <- as_tibble(diffGenes_LLI_LT, rownames = "geneID")
+diffGenes_MLI_LT.df <- as_tibble(diffGenes_MLI_LT, rownames = "geneID")
+diffGenes_HLI_LT.df <- as_tibble(diffGenes_HLI_LT, rownames = "geneID")
+diffGenes_MLI_MT.df <- as_tibble(diffGenes_MLI_MT, rownames = "geneID")
+diffGenes_HLI_MT.df <- as_tibble(diffGenes_HLI_MT, rownames = "geneID")
+diffGenes_LLI_HT.df <- as_tibble(diffGenes_LLI_HT, rownames = "geneID")
+diffGenes_MLI_HT.df <- as_tibble(diffGenes_MLI_HT, rownames = "geneID")
+diffGenes_HLI_HT.df <- as_tibble(diffGenes_HLI_HT, rownames = "geneID")
+
+diffGenes.df <- diffGenes_LLI_LT.df %>%
+    full_join(diffGenes_MLI_LT.df) %>%
+    full_join(diffGenes_HLI_LT.df) %>%
+    full_join(diffGenes_MLI_MT.df) %>%
+    full_join(diffGenes_HLI_MT.df) %>%
+    full_join(diffGenes_LLI_HT.df) %>%
+    full_join(diffGenes_MLI_HT.df) %>%
+    full_join(diffGenes_HLI_HT.df)
+
+
+write_tsv(diffGenes.df, "tables/expression_of_DEGs_Groups.tsv")
+write_tsv(diffGenes_LLI_LT.df, "tables/expression_of_DEGs_LLI_LT.tsv")
+write_tsv(diffGenes_MLI_LT.df, "tables/expression_of_DEGs_MLI_LT.tsv")
+write_tsv(diffGenes_HLI_LT.df, "tables/expression_of_DEGs_HLI_LT.tsv")
+write_tsv(diffGenes_MLI_MT.df, "tables/expression_of_DEGs_MLI_MT.tsv")
+write_tsv(diffGenes_HLI_MT.df, "tables/expression_of_DEGs_HLI_MT.tsv")
+write_tsv(diffGenes_LLI_HT.df, "tables/expression_of_DEGs_LLI_HT.tsv")
+write_tsv(diffGenes_MLI_HT.df, "tables/expression_of_DEGs_MLI_HT.tsv")
+write_tsv(diffGenes_HLI_HT.df, "tables/expression_of_DEGs_HLI_HT.tsv")
+
+
+library(tidyverse)
+library(gplots)
+library(RColorBrewer)
+library(pheatmap)
+myheatcolors <- rev(brewer.pal(name="RdBu", n=11))
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/all_in_one_heatmap_DEGs_Groups.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+pheatmap(as.matrix(diffGenes.df[,-1]),
+        na.rm = F,
+        na_col = "black",
+        cluster_cols = T, cluster_rows = T,
+        color=myheatcolors, scale='row', labRow=NA,
+        cexRow=1, cexCol=1, margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+```{r volcano plot}
+# Volcano Plots ----
+# in topTable function above, set 'number=40000' to capture all genes
+
+# now plot
+p1 <- ggplot(myTopHits_LLI_LT.df) +
+  aes(y=-log10(adj.P.Val), x=logFC, text = paste("Symbol:", geneID)) +
+  geom_point(size=2) +
+  geom_hline(yintercept = -log10(0.01), linetype="longdash", colour="grey", size=1) +
+  geom_vline(xintercept = 1, linetype="longdash", colour="#BE684D", size=1) +
+  geom_vline(xintercept = -1, linetype="longdash", colour="#2C467A", size=1) +
+  annotate("rect", xmin = 1, xmax = 15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#7bdff2") +
+  annotate("rect", xmin = -1, xmax = -15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#f2b5d4") +
+  labs(title="Volcano plot",
+       subtitle = "LLI_LT vs. LLI_MT",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()
+
+p2 <- ggplot(myTopHits_MLI_LT.df) +
+  aes(y=-log10(adj.P.Val), x=logFC, text = paste("Symbol:", geneID)) +
+  geom_point(size=2) +
+  geom_hline(yintercept = -log10(0.01), linetype="longdash", colour="grey", size=1) +
+  geom_vline(xintercept = 1, linetype="longdash", colour="#BE684D", size=1) +
+  geom_vline(xintercept = -1, linetype="longdash", colour="#2C467A", size=1) +
+  annotate("rect", xmin = 1, xmax = 15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#7bdff2") +
+  annotate("rect", xmin = -1, xmax = -15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#f2b5d4") +
+  labs(title="Volcano plot",
+       subtitle = "MLI_LT vs. LLI_MT",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()
+
+p3 <- ggplot(myTopHits_HLI_LT.df) +
+  aes(y=-log10(adj.P.Val), x=logFC, text = paste("Symbol:", geneID)) +
+  geom_point(size=2) +
+  geom_hline(yintercept = -log10(0.01), linetype="longdash", colour="grey", size=1) +
+  geom_vline(xintercept = 1, linetype="longdash", colour="#BE684D", size=1) +
+  geom_vline(xintercept = -1, linetype="longdash", colour="#2C467A", size=1) +
+  annotate("rect", xmin = 1, xmax = 15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#7bdff2") +
+  annotate("rect", xmin = -1, xmax = -15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#f2b5d4") +
+  labs(title="Volcano plot",
+       subtitle = "HLI_LT vs. LLI_MT",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()
+
+p4 <- ggplot(myTopHits_MLI_MT.df) +
+  aes(y=-log10(adj.P.Val), x=logFC, text = paste("Symbol:", geneID)) +
+  geom_point(size=2) +
+  geom_hline(yintercept = -log10(0.01), linetype="longdash", colour="grey", size=1) +
+  geom_vline(xintercept = 1, linetype="longdash", colour="#BE684D", size=1) +
+  geom_vline(xintercept = -1, linetype="longdash", colour="#2C467A", size=1) +
+  annotate("rect", xmin = 1, xmax = 15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#7bdff2") +
+  annotate("rect", xmin = -1, xmax = -15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#f2b5d4") +
+  labs(title="Volcano plot",
+       subtitle = "MLI_MT vs. LLI_MT",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()
+
+p5 <- ggplot(myTopHits_HLI_MT.df) +
+  aes(y=-log10(adj.P.Val), x=logFC, text = paste("Symbol:", geneID)) +
+  geom_point(size=2) +
+  geom_hline(yintercept = -log10(0.01), linetype="longdash", colour="grey", size=1) +
+  geom_vline(xintercept = 1, linetype="longdash", colour="#BE684D", size=1) +
+  geom_vline(xintercept = -1, linetype="longdash", colour="#2C467A", size=1) +
+  annotate("rect", xmin = 1, xmax = 15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#7bdff2") +
+  annotate("rect", xmin = -1, xmax = -15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#f2b5d4") +
+  labs(title="Volcano plot",
+       subtitle = "HLI_MT vs. LLI_MT",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()
+
+p6 <- ggplot(myTopHits_LLI_HT.df) +
+  aes(y=-log10(adj.P.Val), x=logFC, text = paste("Symbol:", geneID)) +
+  geom_point(size=2) +
+  geom_hline(yintercept = -log10(0.01), linetype="longdash", colour="grey", size=1) +
+  geom_vline(xintercept = 1, linetype="longdash", colour="#BE684D", size=1) +
+  geom_vline(xintercept = -1, linetype="longdash", colour="#2C467A", size=1) +
+  annotate("rect", xmin = 1, xmax = 15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#7bdff2") +
+  annotate("rect", xmin = -1, xmax = -15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#f2b5d4") +
+  labs(title="Volcano plot",
+       subtitle = "LLI_HT vs. LLI_MT",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()
+
+p7 <- ggplot(myTopHits_MLI_HT.df) +
+  aes(y=-log10(adj.P.Val), x=logFC, text = paste("Symbol:", geneID)) +
+  geom_point(size=2) +
+  geom_hline(yintercept = -log10(0.01), linetype="longdash", colour="grey", size=1) +
+  geom_vline(xintercept = 1, linetype="longdash", colour="#BE684D", size=1) +
+  geom_vline(xintercept = -1, linetype="longdash", colour="#2C467A", size=1) +
+  annotate("rect", xmin = 1, xmax = 15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#7bdff2") +
+  annotate("rect", xmin = -1, xmax = -15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#f2b5d4") +
+  labs(title="Volcano plot",
+       subtitle = "MLI_HT vs. LLI_MT",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()
+
+p8 <- ggplot(myTopHits_HLI_HT.df) +
+  aes(y=-log10(adj.P.Val), x=logFC, text = paste("Symbol:", geneID)) +
+  geom_point(size=2) +
+  geom_hline(yintercept = -log10(0.01), linetype="longdash", colour="grey", size=1) +
+  geom_vline(xintercept = 1, linetype="longdash", colour="#BE684D", size=1) +
+  geom_vline(xintercept = -1, linetype="longdash", colour="#2C467A", size=1) +
+  annotate("rect", xmin = 1, xmax = 15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#7bdff2") +
+  annotate("rect", xmin = -1, xmax = -15, ymin = -log10(0.01), ymax = 35, alpha=.2, fill="#f2b5d4") +
+  labs(title="Volcano plot",
+       subtitle = "HLI_HT vs. LLI_MT",
+       caption=paste0("produced on ", Sys.time())) +
+  theme_bw()
+
+ggsave(filename = "plots/volcano_plots.pdf", plot_grid(p1, p2, p3, p4, p5, p6, p7, p8, labels = c("A", "B", "C", "D", "E", "F", "G", "H"), label_size = 12, ncol = 4, align = "hv"), width = 20, height = 20)
+plot_grid(p1, p2, p3, p4, p5, p6, p7, p8, labels = c("A", "B", "C", "D", "E", "F", "G", "H"), label_size = 12, ncol = 4, align = "hv")
+```
+
+
+```{r DEGs LLI_LT}
+myheatcolors <- rev(brewer.pal(name="RdBu", n=10))
+clustRows <- hclust(as.dist(1-cor(t(diffGenes_LLI_LT), method="pearson")), method="complete") #cluster rows by pearson correlation
+clustColumns <- hclust(as.dist(1-cor(diffGenes_LLI_LT, method="spearman")), method="complete")
+module.assign <- cutree(clustRows, k=2)
+module.color <- rainbow(length(unique(module.assign)), start=0.1, end=0.9) 
+module.color <- module.color[as.vector(module.assign)]
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/LLI_LT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(diffGenes_LLI_LT, 
+          Rowv=as.dendrogram(clustRows), 
+          Colv=as.dendrogram(clustColumns),
+          RowSideColors=module.color,
+          col=myheatcolors, scale='row', labRow=NA,
+          density.info="none", trace="none",  
+          cexRow=1, cexCol=1, margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 2 
+myModule_2 <- diffGenes_LLI_LT[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_2 <- hclust(as.dist(1-cor(t(myModule_2), method="pearson")), method="complete")
+clustColumns <- hclust(as.dist(1-cor(myModule_2, method="spearman")), method="complete")
+myModule_2.df <- as_tibble(myModule_2, rownames = "geneID")
+write_tsv(myModule_2.df, "tables/LLI_LT/module_2_genes.tsv")
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/module_2_LLI_LT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(myModule_2, 
+          Rowv=as.dendrogram(hrsub_2), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 1 
+myModule_1 <- diffGenes_LLI_LT[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_1 <- hclust(as.dist(1-cor(t(myModule_1), method="pearson")), method="complete")
+clustColumns <- hclust(as.dist(1-cor(myModule_1, method="spearman")), method="complete")
+myModule_1.df <- as_tibble(myModule_1, rownames = "geneID")
+write_tsv(myModule_1.df, "tables/LLI_LT/module_1_genes.tsv")
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/module1_LLI_LT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+
+heatmap.2(myModule_1, 
+          Rowv=as.dendrogram(hrsub_1), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+```{r Step 6: Enrichment LLI_LT}
+library(clusterProfiler)
+library(enrichplot)
+library(tidyverse)
+
+term2gene <- read.csv2("term2gene_GO.csv")
+term2gene <- term2gene[,-1] # remove the first index row
+term2name <- read.csv2("term2name_GO.csv")
+term2name <- term2name[,-1] # remove the first index row
+
+my_universe <- term2gene[term2gene$gene %in% v.DEGList.filtered.norm_E.df$geneID,]
+
+## Up regulated
+enrichment <- enricher(rownames(myModule_2),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/LLI_LT/module2_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/LLI_LT/module2_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/LLI_LT/module2_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+
+## Down regulated
+enrichment <- enricher(rownames(myModule_1),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/LLI_LT/module1_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/LLI_LT/module1_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/LLI_LT/module1_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+```
+
+```{r DEGs MLI_LT}
+myheatcolors <- rev(brewer.pal(name="RdBu", n=10))
+clustRows <- hclust(as.dist(1-cor(t(diffGenes_MLI_LT), method="pearson")), method="complete") #cluster rows by pearson correlation
+clustColumns <- hclust(as.dist(1-cor(diffGenes_MLI_LT, method="spearman")), method="complete")
+module.assign <- cutree(clustRows, k=2)
+module.color <- rainbow(length(unique(module.assign)), start=0.1, end=0.9) 
+module.color <- module.color[as.vector(module.assign)]
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/MLI_LT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(diffGenes_MLI_LT, 
+          Rowv=as.dendrogram(clustRows), 
+          Colv=as.dendrogram(clustColumns),
+          RowSideColors=module.color,
+          col=myheatcolors, scale='row', labRow=NA,
+          density.info="none", trace="none",  
+          cexRow=1, cexCol=1, margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 2 
+myModule_2 <- diffGenes_MLI_LT[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_2 <- hclust(as.dist(1-cor(t(myModule_2), method="pearson")), method="complete")
+clustColumns <- hclust(as.dist(1-cor(myModule_2, method="spearman")), method="complete")
+myModule_2.df <- as_tibble(myModule_2, rownames = "geneID")
+write_tsv(myModule_2.df, "tables/MLI_LT/module_2_genes.tsv")
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/module_2_MLI_LT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(myModule_2, 
+          Rowv=as.dendrogram(hrsub_2), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 1 
+myModule_1 <- diffGenes_MLI_LT[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_1 <- hclust(as.dist(1-cor(t(myModule_1), method="pearson")), method="complete")
+clustColumns <- hclust(as.dist(1-cor(myModule_1, method="spearman")), method="complete")
+myModule_1.df <- as_tibble(myModule_1, rownames = "geneID")
+write_tsv(myModule_1.df, "tables/MLI_LT/module_1_genes.tsv")
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/module1_MLI_LT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+
+heatmap.2(myModule_1, 
+          Rowv=as.dendrogram(hrsub_1), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+```{r Step 6: Enrichment MLI_LT}
+## Up regulated
+enrichment <- enricher(rownames(myModule_2),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/MLI_LT/module2_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/MLI_LT/module2_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/MLI_LT/module2_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+
+## Down regulated
+enrichment <- enricher(rownames(myModule_1),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/MLI_LT/module1_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/MLI_LT/module1_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/MLI_LT/module1_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+```
+
+```{r DEGs HLI_LT}
+myheatcolors <- rev(brewer.pal(name="RdBu", n=10))
+clustRows <- hclust(as.dist(1-cor(t(diffGenes_HLI_LT), method="pearson")), method="complete") #cluster rows by pearson correlation
+clustColumns <- hclust(as.dist(1-cor(diffGenes_HLI_LT, method="spearman")), method="complete")
+module.assign <- cutree(clustRows, k=2)
+module.color <- rainbow(length(unique(module.assign)), start=0.1, end=0.9) 
+module.color <- module.color[as.vector(module.assign)]
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/HLI_LT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(diffGenes_HLI_LT, 
+          Rowv=as.dendrogram(clustRows), 
+          Colv=as.dendrogram(clustColumns),
+          RowSideColors=module.color,
+          col=myheatcolors, scale='row', labRow=NA,
+          density.info="none", trace="none",  
+          cexRow=1, cexCol=1, margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 2 
+myModule_2 <- diffGenes_HLI_LT[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_2 <- hclust(as.dist(1-cor(t(myModule_2), method="pearson")), method="complete") 
+clustColumns <- hclust(as.dist(1-cor(myModule_2, method="spearman")), method="complete")
+
+myModule_2.df <- as_tibble(myModule_2, rownames = "geneID")
+write_tsv(myModule_2.df, "tables/HLI_LT/module_2_genes.tsv")
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/module_2_HLI_LT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(myModule_2, 
+          Rowv=as.dendrogram(hrsub_2), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 1 
+myModule_1 <- diffGenes_HLI_LT[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_1 <- hclust(as.dist(1-cor(t(myModule_1), method="pearson")), method="complete")
+clustColumns <- hclust(as.dist(1-cor(myModule_1, method="spearman")), method="complete")
+myModule_1.df <- as_tibble(myModule_1, rownames = "geneID")
+write_tsv(myModule_1.df, "tables/HLI_LT/module_1_genes.tsv")
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/module1_HLI_LT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+
+heatmap.2(myModule_1, 
+          Rowv=as.dendrogram(hrsub_1), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+```{r Step 6: Enrichment HLI_LT}
+## Up regulated
+enrichment <- enricher(rownames(myModule_2),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/HLI_LT/module2_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/HLI_LT/module2_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/HLI_LT/module2_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+
+## Down regulated
+enrichment <- enricher(rownames(myModule_1),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/HLI_LT/module1_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/HLI_LT/module1_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/HLI_LT/module1_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+```
+
+```{r DEGs MLI_MT}
+myheatcolors <- rev(brewer.pal(name="RdBu", n=10))
+clustRows <- hclust(as.dist(1-cor(t(diffGenes_MLI_MT), method="pearson")), method="complete") #cluster rows by pearson correlation
+clustColumns <- hclust(as.dist(1-cor(diffGenes_MLI_MT, method="spearman")), method="complete")
+module.assign <- cutree(clustRows, k=2)
+module.color <- rainbow(length(unique(module.assign)), start=0.1, end=0.9) 
+module.color <- module.color[as.vector(module.assign)]
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/MLI_MT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(diffGenes_MLI_MT, 
+          Rowv=as.dendrogram(clustRows), 
+          Colv=as.dendrogram(clustColumns),
+          RowSideColors=module.color,
+          col=myheatcolors, scale='row', labRow=NA,
+          density.info="none", trace="none",  
+          cexRow=1, cexCol=1, margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 2 
+myModule_2 <- diffGenes_MLI_MT[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_2 <- hclust(as.dist(1-cor(t(myModule_2), method="pearson")), method="complete")
+clustColumns <- hclust(as.dist(1-cor(myModule_2, method="spearman")), method="complete")
+myModule_2.df <- as_tibble(myModule_2, rownames = "geneID")
+write_tsv(myModule_2.df, "tables/MLI_MT/module_2_genes.tsv")
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/module_2_MLI_MT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(myModule_2, 
+          Rowv=as.dendrogram(hrsub_2), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 1 
+myModule_1 <- diffGenes_MLI_MT[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_1 <- hclust(as.dist(1-cor(t(myModule_1), method="pearson")), method="complete") 
+clustColumns <- hclust(as.dist(1-cor(myModule_1, method="spearman")), method="complete")
+myModule_1.df <- as_tibble(myModule_1, rownames = "geneID")
+write_tsv(myModule_1.df, "tables/MLI_MT/module_1_genes.tsv")
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/module1_MLI_MT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+
+heatmap.2(myModule_1, 
+          Rowv=as.dendrogram(hrsub_1), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+```{r Step 6: Enrichment MLI_MT}
+## Up regulated
+enrichment <- enricher(rownames(myModule_2),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/MLI_MT/module2_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/MLI_MT/module2_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/MLI_MT/module2_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+
+## Down regulated
+enrichment <- enricher(rownames(myModule_1),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/MLI_MT/module1_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/MLI_MT/module1_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/MLI_MT/module1_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+```
+
+```{r DEGs HLI_MT}
+myheatcolors <- rev(brewer.pal(name="RdBu", n=10))
+clustRows <- hclust(as.dist(1-cor(t(diffGenes_HLI_MT), method="pearson")), method="complete") #cluster rows by pearson correlation
+clustColumns <- hclust(as.dist(1-cor(diffGenes_HLI_MT, method="spearman")), method="complete")
+module.assign <- cutree(clustRows, k=2)
+module.color <- rainbow(length(unique(module.assign)), start=0.1, end=0.9) 
+module.color <- module.color[as.vector(module.assign)]
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/HLI_MT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(diffGenes_HLI_MT, 
+          Rowv=as.dendrogram(clustRows), 
+          Colv=as.dendrogram(clustColumns),
+          RowSideColors=module.color,
+          col=myheatcolors, scale='row', labRow=NA,
+          density.info="none", trace="none",  
+          cexRow=1, cexCol=1, margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 2 
+myModule_2 <- diffGenes_HLI_MT[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_2 <- hclust(as.dist(1-cor(t(myModule_2), method="pearson")), method="complete") 
+clustColumns <- hclust(as.dist(1-cor(myModule_2, method="spearman")), method="complete")
+myModule_2.df <- as_tibble(myModule_2, rownames = "geneID")
+write_tsv(myModule_2.df, "tables/HLI_MT/module_2_genes.tsv")
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/module_2_HLI_MT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(myModule_2, 
+          Rowv=as.dendrogram(hrsub_2), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 1 
+myModule_1 <- diffGenes_HLI_MT[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_1 <- hclust(as.dist(1-cor(t(myModule_1), method="pearson")), method="complete") 
+clustColumns <- hclust(as.dist(1-cor(myModule_1, method="spearman")), method="complete")
+myModule_1.df <- as_tibble(myModule_1, rownames = "geneID")
+write_tsv(myModule_1.df, "tables/HLI_MT/module_1_genes.tsv")
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/module1_HLI_MT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+
+heatmap.2(myModule_1, 
+          Rowv=as.dendrogram(hrsub_1), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+```{r Step 6: Enrichment HLI_MT}
+## Up regulated
+enrichment <- enricher(rownames(myModule_2),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/HLI_MT/module2_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/HLI_MT/module2_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/HLI_MT/module2_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+
+## Down regulated
+enrichment <- enricher(rownames(myModule_1),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/HLI_MT/module1_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/HLI_MT/module1_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/HLI_MT/module1_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+```
+
+```{r DEGs LLI_HT}
+myheatcolors <- rev(brewer.pal(name="RdBu", n=10))
+clustRows <- hclust(as.dist(1-cor(t(diffGenes_LLI_HT), method="pearson")), method="complete") #cluster rows by pearson correlation
+clustColumns <- hclust(as.dist(1-cor(diffGenes_LLI_HT, method="spearman")), method="complete")
+module.assign <- cutree(clustRows, k=2)
+module.color <- rainbow(length(unique(module.assign)), start=0.1, end=0.9) 
+module.color <- module.color[as.vector(module.assign)]
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/LLI_HT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(diffGenes_LLI_HT, 
+          Rowv=as.dendrogram(clustRows), 
+          Colv=as.dendrogram(clustColumns),
+          RowSideColors=module.color,
+          col=myheatcolors, scale='row', labRow=NA,
+          density.info="none", trace="none",  
+          cexRow=1, cexCol=1, margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 2 
+myModule_2 <- diffGenes_LLI_HT[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_2 <- hclust(as.dist(1-cor(t(myModule_2), method="pearson")), method="complete") 
+clustColumns <- hclust(as.dist(1-cor(myModule_2, method="spearman")), method="complete")
+myModule_2.df <- as_tibble(myModule_2, rownames = "geneID")
+write_tsv(myModule_2.df, "tables/LLI_HT/module_2_genes.tsv")
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/module_2_LLI_HT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(myModule_2, 
+          Rowv=as.dendrogram(hrsub_2), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 1 
+myModule_1 <- diffGenes_LLI_HT[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_1 <- hclust(as.dist(1-cor(t(myModule_1), method="pearson")), method="complete")
+clustColumns <- hclust(as.dist(1-cor(myModule_1, method="spearman")), method="complete")
+myModule_1.df <- as_tibble(myModule_1, rownames = "geneID")
+write_tsv(myModule_1.df, "tables/LLI_HT/module_1_genes.tsv")
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/module1_LLI_HT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+
+heatmap.2(myModule_1, 
+          Rowv=as.dendrogram(hrsub_1), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+```{r Step 6: Enrichment LLI_HT}
+## Up regulated
+enrichment <- enricher(rownames(myModule_2),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/LLI_HT/module2_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/LLI_HT/module2_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/LLI_HT/module2_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+
+## Down regulated
+enrichment <- enricher(rownames(myModule_1),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/LLI_HT/module1_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/LLI_HT/module1_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/LLI_HT/module1_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+```
+
+```{r DEGs MLI_HT}
+myheatcolors <- rev(brewer.pal(name="RdBu", n=10))
+clustRows <- hclust(as.dist(1-cor(t(diffGenes_MLI_HT), method="pearson")), method="complete") #cluster rows by pearson correlation
+clustColumns <- hclust(as.dist(1-cor(diffGenes_MLI_HT, method="spearman")), method="complete")
+module.assign <- cutree(clustRows, k=2)
+module.color <- rainbow(length(unique(module.assign)), start=0.1, end=0.9) 
+module.color <- module.color[as.vector(module.assign)]
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/MLI_HT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(diffGenes_MLI_HT, 
+          Rowv=as.dendrogram(clustRows), 
+          Colv=as.dendrogram(clustColumns),
+          RowSideColors=module.color,
+          col=myheatcolors, scale='row', labRow=NA,
+          density.info="none", trace="none",  
+          cexRow=1, cexCol=1, margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 2 
+myModule_2 <- diffGenes_MLI_HT[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_2 <- hclust(as.dist(1-cor(t(myModule_2), method="pearson")), method="complete")
+clustColumns <- hclust(as.dist(1-cor(myModule_2, method="spearman")), method="complete")
+myModule_2.df <- as_tibble(myModule_2, rownames = "geneID")
+write_tsv(myModule_2.df, "tables/MLI_HT/module_2_genes.tsv")
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/module_2_MLI_HT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(myModule_2, 
+          Rowv=as.dendrogram(hrsub_2), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 1 
+myModule_1 <- diffGenes_MLI_HT[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_1 <- hclust(as.dist(1-cor(t(myModule_1), method="pearson")), method="complete")
+clustColumns <- hclust(as.dist(1-cor(myModule_1, method="spearman")), method="complete")
+myModule_1.df <- as_tibble(myModule_1, rownames = "geneID")
+write_tsv(myModule_1.df, "tables/MLI_HT/module_1_genes.tsv")
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/module1_MLI_HT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+
+heatmap.2(myModule_1, 
+          Rowv=as.dendrogram(hrsub_1), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+```{r Step 6: Enrichment MLI_HT}
+## Up regulated
+enrichment <- enricher(rownames(myModule_2),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/MLI_HT/module2_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/MLI_HT/module2_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/MLI_HT/module2_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+
+## Down regulated
+enrichment <- enricher(rownames(myModule_1),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/MLI_HT/module1_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/MLI_HT/module1_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/MLI_HT/module1_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+```
+
+```{r DEGs HLI_HT}
+myheatcolors <- rev(brewer.pal(name="RdBu", n=10))
+clustRows <- hclust(as.dist(1-cor(t(diffGenes_HLI_HT), method="pearson")), method="complete") #cluster rows by pearson correlation
+clustColumns <- hclust(as.dist(1-cor(diffGenes_HLI_HT, method="spearman")), method="complete")
+module.assign <- cutree(clustRows, k=2)
+module.color <- rainbow(length(unique(module.assign)), start=0.1, end=0.9) 
+module.color <- module.color[as.vector(module.assign)]
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/HLI_HT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(diffGenes_HLI_HT, 
+          Rowv=as.dendrogram(clustRows), 
+          Colv=as.dendrogram(clustColumns),
+          RowSideColors=module.color,
+          col=myheatcolors, scale='row', labRow=NA,
+          density.info="none", trace="none",  
+          cexRow=1, cexCol=1, margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 2 
+myModule_2 <- diffGenes_HLI_HT[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_2 <- hclust(as.dist(1-cor(t(myModule_2), method="pearson")), method="complete")
+clustColumns <- hclust(as.dist(1-cor(myModule_2, method="spearman")), method="complete")
+myModule_2.df <- as_tibble(myModule_2, rownames = "geneID")
+write_tsv(myModule_2.df, "tables/HLI_HT/module_2_genes.tsv")
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/module_2_HLI_HT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+heatmap.2(myModule_2, 
+          Rowv=as.dendrogram(hrsub_2), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+
+
+
+modulePick <- 1 
+myModule_1 <- diffGenes_HLI_HT[names(module.assign[module.assign %in% modulePick]),] 
+hrsub_1 <- hclust(as.dist(1-cor(t(myModule_1), method="pearson")), method="complete")
+clustColumns <- hclust(as.dist(1-cor(myModule_1, method="spearman")), method="complete")
+myModule_1.df <- as_tibble(myModule_1, rownames = "geneID")
+write_tsv(myModule_1.df, "tables/HLI_HT/module_1_genes.tsv")
+
+
+# Step 1: Call the pdf command to start the plot
+pdf(file = paste0("plots/heatmaps/module1_HLI_HT.pdf"),   # The directory you want to save the file in
+    width = 21, # The width of the plot in inches
+    height = 21) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+
+heatmap.2(myModule_1, 
+          Rowv=as.dendrogram(hrsub_1), 
+          Colv=clustColumns, 
+          labRow = NA,
+          col=myheatcolors, scale="row", 
+          density.info="none", trace="none", 
+          RowSideColors=module.color[module.assign%in%modulePick], margins=c(8,20))
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+```{r Step 6: Enrichment HLI_HT}
+## Up regulated
+enrichment <- enricher(rownames(myModule_2),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/HLI_HT/module2_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/HLI_HT/module2_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/HLI_HT/module2_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+
+## Down regulated
+enrichment <- enricher(rownames(myModule_1),
+                       TERM2GENE = term2gene,
+                       TERM2NAME = term2name,
+                       pvalueCutoff = 0.01,
+                       universe = my_universe$gene,
+                       qvalueCutoff = 0.01)
+#save the enrichment result
+write.csv(file = paste0("plots/heatmaps/HLI_HT/module1_enrichment.csv"), x = enrichment@result)
+    
+if (any(enrichment@result$p.adjust <= 0.01)){
+    p <- dotplot(enrichment,
+                 x= "geneRatio", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 color="p.adjust",
+                 orderBy = "x", # Options: GeneRatio, BgRatio, pvalue, p.adjust, qvalue
+                 showCategory=50,
+                 font.size=8) +
+        ggtitle("dotplot for ORA")
+    
+    ggsave(filename = paste0("plots/heatmaps/HLI_HT/module1_dotplot.pdf"),
+           plot =  p,  dpi = 600, width = 40, height = 40, units = "cm")
+    
+    p <- cnetplot(enrichment,
+                  node_label="all",
+                  showCategory = 30,
+                  colorEdge = TRUE,
+                  cex_label_gene = 0.5,
+                  cex_label_category=0.5,
+                  layout = "kk")
+    ggsave(filename = paste0("plots/heatmaps/HLI_HT/module1_cnetplot.pdf"),plot =  p,  dpi = 600,
+               width =  60, height = 40, units = "cm")
+}
+```
+
+
+# Session info
+
+The output from running 'sessionInfo' is shown below and details all packages and version necessary to reproduce the results in this report.
+
+```{r session info}
+sessionInfo()
+```
