@@ -1,0 +1,110 @@
+db_settings:
+  db: mikado.db
+  dbtype: sqlite
+pick:
+  alternative_splicing:
+    cds_only: false
+    keep_cds_disrupted_by_ri: false
+    keep_retained_introns: true
+    max_isoforms: 15
+    min_cdna_overlap: 0.1
+    min_cds_overlap: 0.5
+    min_score_perc: 0.1
+    only_confirmed_introns: false
+    pad: true
+    report: true
+    ts_distance: 4000
+    ts_max_splices: 3
+    valid_ccodes:
+    - j
+    - J
+    - G
+    - h
+    - C
+  chimera_split:
+    blast_check: true
+    blast_params:
+      leniency: STRINGENT
+    execute: true
+    skip:
+    - false
+    - false
+  clustering:
+    cds_only: false
+    simple_overlap_for_monoexonic: false
+  files:
+    input: mikado_prepared.gtf
+    monoloci_out: ''
+    subloci_out: ''
+  fragments:
+    max_distance: 2000
+    remove: true
+  orf_loading:
+    minimal_orf_length: 50
+    minimal_secondary_orf_length: 200
+    strand_specific: true
+  output_format:
+    id_prefix: ME
+    report_all_orfs: false
+    source: Mikado
+  run_options:
+    check_references: false
+    exclude_cds: false
+    intron_range:
+    - 20
+    - 50000
+    only_reference_update: false
+    reference_update: false
+    shm: false
+    single_thread: false
+  scoring_file: plant.yaml
+prepare:
+  canonical:
+  - - GT
+    - AG
+  - - GC
+    - AG
+  - - AT
+    - AC
+  exclude_redundant: false
+  files:
+    exclude_redundant:
+    - false
+    - false
+    gff:
+    - /home/armin/projects/meso_genome_annotation/prediction_workflow/cromwell-executions/ei_prediction/dbf84e2a-5e4c-443e-b49d-6219531c9a19/call-Mikado/inputs/-1377497452/evm.out.gff3
+    - /home/armin/projects/meso_genome_annotation/prediction_workflow/cromwell-executions/ei_prediction/dbf84e2a-5e4c-443e-b49d-6219531c9a19/call-Mikado/inputs/163301647/models_with_utrs.gff3
+    labels:
+    - evm
+    - UTRs_evm
+    reference:
+    - true
+    - false
+    source_score:
+      UTRs_evm: 0.0
+      evm: 0.0
+    strand_specific_assemblies:
+    - /home/armin/projects/meso_genome_annotation/prediction_workflow/cromwell-executions/ei_prediction/dbf84e2a-5e4c-443e-b49d-6219531c9a19/call-Mikado/inputs/-1377497452/evm.out.gff3
+    - /home/armin/projects/meso_genome_annotation/prediction_workflow/cromwell-executions/ei_prediction/dbf84e2a-5e4c-443e-b49d-6219531c9a19/call-Mikado/inputs/163301647/models_with_utrs.gff3
+    strip_cds:
+    - false
+    - false
+  lenient: false
+  max_intron_length: 80000
+  minimum_cdna_length: 200
+  single: false
+  strand_specific: true
+  strip_cds: false
+  strip_faulty_cds: false
+reference:
+  genome: /home/armin/projects/meso_genome_annotation/prediction_workflow/cromwell-executions/ei_prediction/dbf84e2a-5e4c-443e-b49d-6219531c9a19/call-Mikado/inputs/-2083780028/Mesotaenium_endlicherianum_genome.softmasked.fa
+seed: 0
+serialise:
+  codon_table: 0
+  files:
+    transcripts: mikado_prepared.fasta
+  max_regression: 0.2
+  start_adjustment: true
+  substitution_matrix: blosum62
+threads: 1
+

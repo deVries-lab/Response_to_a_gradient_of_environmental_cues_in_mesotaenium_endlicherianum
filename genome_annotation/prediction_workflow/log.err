@@ -1,0 +1,328 @@
+"spaln" version information:
+"""
+No input seq file !
+
+*** SPALN version 2.4.7 <220128> ***
+
+Usage:
+spaln -W[Genome.bkn] -KD [W_Options] Genome.mfa	(to write block inf.)
+spaln -W[Genome.bkp] -KP [W_Options] Genome.mfa	(to write block inf.)
+spaln -W[AAdb.bka] -KA [W_Options] AAdb.faa	(to write aa db inf.)
+spaln -W [Genome.mfa|AAdb.faa]	(alternative to makdbs.)
+spaln [R_options] genomic_segment cDNA.fa	(to align)
+spaln [R_options] genomic_segment protein.fa	(to align)
+spaln [R_options] -dGenome cDNA.fa	(to map & align)
+spaln [R_options] -dGenome protein.fa	(to map & align)
+spaln [R_options] -aAAdb genomic_segment.fa	(to search aa database & align)
+spaln [R_options] -aAAdb protein.fa	(to search aa database)
+
+in the following, # = integer or real number; $ = string; default in ()
+
+W_Options:
+	-E	Generate local lookup table for each block
+	-XC#	number of bit patterns < 6 (1)
+	-XG#	Maximum expected gene size (inferred from genome|db size)
+	-Xk#	Word size (inferred from genome|db size)
+	-Xb#	Block size (inferred from genome|db size)
+	-Xa#	Abundance factor (10)
+	-Xr#	Minimum ORF length with -KP (30))
+	-g	gzipped output
+	-t#	Mutli-thread operation with # threads
+
+R_Options (representatives):
+	-E	Use local lookup table for each block
+	-H#	Minimum score for report (35)
+	-L or -LS or -L#	semi-global or local alignment (-L)
+	-M#[,#2]	Number of outputs per query (1) (4 if # is omitted)
+		#2 (4) specifies the max number of candidate loci
+		This option is effective only for map-and-align modes
+	-O#[,#2,..] (GvsA|C)	0:Gff3_gene; 1:alignment; 2:Gff3_match; 3:Bed; 4:exon-inf;
+			5:intron-inf; 6:cDNA; 7:translated; 8:block-only;
+			10:SAM; 12:binary; 15:query+GS (4)
+	-O#[,#2,..] (AvsA)	0:statistics; 1:alignment; 2:Sugar; 3:Psl; 4:XYL;
+			5:srat+XYL; 8:Cigar; 9:Vulgar; 10:SAM; (4)
+	-Q#	0:DP; 1-3:HSP-Search; 4-7; Block-Search (3)
+	-R$	Read block information file *.bkn, *.bkp or *.bka
+	-S#	Orientation. 0:annotation; 1:forward; 2:reverse; 3:both (3)
+	-T$	Subdirectory where species-specific parameters reside
+	-a$	Specify AAdb. Must run `makeidx.pl -ia' breforehand
+	-A$	Same as -a but db sequences are stored in memory
+	-d$	Specify genome. Must run `makeidx.pl -i[n|p]' breforehand
+	-D$	Same as -d but db sequences are stored in memory
+	-g	gzipped output in combination with -O12
+	-l#	Number of characters per line in alignment (60)
+	-o$	File/directory/prefix where results are written (stdout)
+	-pa#	Remove 3' poly A >= # (0: don't remove)
+	-pw	Report results even if the score is below the threshold
+	-pq	Quiet mode
+	-r$	Report information about block data file
+	-u#	Gap-extension penalty (3)
+	-v#	Gap-open penalty (8)
+	-w#	Band width for DP matrix scan (100)
+	-t[#]	Mutli-thread operation with # threads
+	-ya#	Stringency of splice site. 0->3:strong->weak
+	-yl3	Ddouble affine gap penalty
+	-ym#	Nucleotide match score (2)
+	-yn#	Nucleotide mismatch score (-6)
+	-yo#	Penalty for a premature termination codon (100)
+	-yx#	Penalty for a frame shift error (100)
+	-yy#	Weight for splice site signal (8)
+	-yz#	Weight for coding potential (2)
+	-yB#	Weight for branch point signal (0)
+	-yI$	Intron length distribution
+	-yL#	Minimum expected length of intron (30)
+	-yS[#]	Use species-specific parameter set (0.0/0.5)
+	-yX0	Don't use parameter set for cross-species comparison
+	-yZ#	Weight for intron potential (0)
+	-XG#	Reset maximum expected gene size, suffix k or M is effective
+
+Examples:
+	spaln -W -KP -E -t4 dictdisc_g.gf
+	spaln -W -KA -Xk5 Swiss.faa
+	spaln -O -LS 'chr1.fa 10001 40000' cdna.nfa
+	spaln -Q0,1,7 -t10 -TTetrapod -XG2M -ommu/ -dmus_musc_g hspcdna.nfa
+	spaln -Q7 -O5 -t10 -Tdictdics -ddictdisc_g [-E] 'dictdisc.faa (101 200)' > ddi.intron
+	spaln -Q7 -O0 -t10 -Tdictdics -aSwiss 'chr1.nfa 200001 210000' > Chr1_200-210K.gff
+	spaln -Q4 -O0 -t10 -M10 -aSwiss dictdisc.faa > dictdisc.alignment_score
+"""
+
+Does not contain indication of the required version:
+"""
+SPALN version 2.4.0
+"""
+
+
+"mikado" version information:
+"""
+Mikado v2.3.4
+"""
+
+Does not contain indication of the required version:
+"""
+Mikado v2.0rc2
+"""
+
+
+"diamond" version information:
+"""
+diamond version 2.0.15
+"""
+
+Does not contain indication of the required version:
+"""
+diamond version 0.9.31
+"""
+
+
+"blastn" version information:
+"""
+blastn: 2.12.0+
+ Package: blast 2.12.0, build Feb 24 2022 03:36:48
+"""
+
+Does not contain indication of the required version:
+"""
+blastn: 2.7.1+
+"""
+
+
+"blastx" version information:
+"""
+blastx: 2.12.0+
+ Package: blast 2.12.0, build Feb 24 2022 03:36:48
+"""
+
+Does not contain indication of the required version:
+"""
+blastx: 2.7.1+
+"""
+
+
+"samtools" version information:
+"""
+samtools 1.12
+Using htslib 1.12
+Copyright (C) 2021 Genome Research Ltd.
+
+Samtools compilation details:
+    Features:       build=configure curses=yes 
+    CC:             /opt/conda/conda-bld/samtools_1616892191687/_build_env/bin/x86_64-conda-linux-gnu-cc
+    CPPFLAGS:       -DNDEBUG -D_FORTIFY_SOURCE=2 -O2 -isystem /home/armin/miniconda3/envs/REAT/include
+    CFLAGS:         -Wall -march=nocona -mtune=haswell -ftree-vectorize -fPIC -fstack-protector-strong -fno-plt -O2 -ffunction-sections -pipe -isystem /home/armin/miniconda3/envs/REAT/include -fdebug-prefix-map=/opt/conda/conda-bld/samtools_1616892191687/work=/usr/local/src/conda/samtools-1.12 -fdebug-prefix-map=/home/armin/miniconda3/envs/REAT=/usr/local/src/conda-prefix
+    LDFLAGS:        -Wl,-O2 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now -Wl,--disable-new-dtags -Wl,--gc-sections -Wl,-rpath,/home/armin/miniconda3/envs/REAT/lib -Wl,-rpath-link,/home/armin/miniconda3/envs/REAT/lib -L/home/armin/miniconda3/envs/REAT/lib
+    HTSDIR:         
+    LIBS:           
+    CURSES_LIB:     -ltinfow -lncursesw
+
+HTSlib compilation details:
+    Features:       build=configure plugins=yes, plugin-path=/home/armin/miniconda3/envs/REAT/libexec/htslib libcurl=yes S3=yes GCS=yes libdeflate=yes lzma=yes bzip2=yes htscodecs=1.0
+    CC:             /opt/conda/conda-bld/htslib_1616818599374/_build_env/bin/x86_64-conda-linux-gnu-cc
+    CPPFLAGS:       -DNDEBUG -D_FORTIFY_SOURCE=2 -O2 -isystem /home/armin/miniconda3/envs/REAT/include
+    CFLAGS:         -Wall -march=nocona -mtune=haswell -ftree-vectorize -fPIC -fstack-protector-strong -fno-plt -O2 -ffunction-sections -pipe -isystem /home/armin/miniconda3/envs/REAT/include -fdebug-prefix-map=/opt/conda/conda-bld/htslib_1616818599374/work=/usr/local/src/conda/htslib-1.12 -fdebug-prefix-map=/home/armin/miniconda3/envs/REAT=/usr/local/src/conda-prefix -fvisibility=hidden
+    LDFLAGS:        -Wl,-O2 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now -Wl,--disable-new-dtags -Wl,--gc-sections -Wl,-rpath,/home/armin/miniconda3/envs/REAT/lib -Wl,-rpath-link,/home/armin/miniconda3/envs/REAT/lib -L/home/armin/miniconda3/envs/REAT/lib -fvisibility=hidden -rdynamic
+
+HTSlib URL scheme handlers present:
+    built-in:	 preload, data, file
+    Google Cloud Storage:	 gs+http, gs+https, gs
+    S3 Multipart Upload:	 s3w, s3w+https, s3w+http
+    Amazon S3:	 s3+https, s3+http, s3
+    libcurl:	 imaps, pop3, gophers, http, smb, gopher, sftp, ftps, imap, smtp, smtps, rtsp, scp, ftp, telnet, mqtt, https, smbs, tftp, pop3s, dict
+    crypt4gh-needed:	 crypt4gh
+    mem:	 mem
+"""
+
+Does not contain indication of the required version:
+"""
+samtools 1.9
+"""
+
+
+"gffread" version information:
+"""
+0.12.1
+"""
+
+Does not contain indication of the required version:
+"""
+0.12.2
+"""
+
+
+"gmap" version information:
+"""
+GMAP: Genomic Mapping and Alignment Program
+Part of GMAP package, version 2021-02-22
+Build target: x86_64-pc-linux-gnu
+Features: pthreads enabled, no alloca, zlib available, mmap available, littleendian, sigaction available, 64 bits available
+Popcnt: mm_popcnt builtin_popcount
+Builtin functions: builtin_clz builtin_ctz builtin_popcount
+SIMD functions compiled: SSE2 SSSE3 SSE4.1 SSE4.2 AVX2
+Sizes: off_t (8), size_t (8), unsigned int (4), long int (8), long long int (8)
+Default gmap directory (compiled): /var/cache/gmap
+Default gmap directory (environment): /var/cache/gmap
+Thomas D. Wu, Genentech, Inc.
+Contact: twu@gene.com
+
+GMAP version 2021-02-22 called with args: gmap.avx2 --version
+"""
+
+Does not contain indication of the required version:
+"""
+version 2019-02-15
+"""
+
+
+"minimap2" version information:
+"""
+2.18-r1015
+"""
+
+Does not contain indication of the required version:
+"""
+2.17-r941
+"""
+
+
+"hisat2" version information:
+"""
+/home/armin/miniconda3/envs/REAT/bin/hisat2-align-s version 2.2.1
+64-bit
+Built on fv-az212-765
+Wed Feb 23 05:52:46 UTC 2022
+Compiler: collect2: error: ld returned 1 exit status
+Options: -O3 -m64 -msse2 -funroll-loops -g3 -DPOPCNT_CAPABILITY -std=c++11
+Sizeof {int, long, long long, void*, size_t, off_t}: {4, 8, 8, 8, 8, 8}
+"""
+
+Does not contain indication of the required version:
+"""
+version 2.1.0
+"""
+
+
+"star" version information:
+"""
+2.7.8a
+"""
+
+Does not contain indication of the required version:
+"""
+2.7.3a
+"""
+
+
+"seqtk" version information:
+"""
+Usage:   seqtk <command> <arguments>
+Version: 1.3-r106
+
+Command: seq       common transformation of FASTA/Q
+         comp      get the nucleotide composition of FASTA/Q
+         sample    subsample sequences
+         subseq    extract subsequences from FASTA/Q
+         fqchk     fastq QC (base/quality summary)
+         mergepe   interleave two PE FASTA/Q files
+         trimfq    trim FASTQ using the Phred algorithm
+
+         hety      regional heterozygosity
+         gc        identify high- or low-GC regions
+         mutfa     point mutate FASTA at specified positions
+         mergefa   merge two FASTA/Q files
+         famask    apply a X-coded FASTA to a source FASTA
+         dropse    drop unpaired from interleaved PE FASTA/Q
+         rename    rename sequence names
+         randbase  choose a random base from hets
+         cutN      cut sequence at long N
+         listhet   extract the position of each het
+"""
+
+Does not contain indication of the required version:
+"""
+Version: 1.3-r116-dirty
+"""
+
+
+"stringtie" version information:
+"""
+2.1.5
+"""
+
+Does not contain indication of the required version:
+"""
+2.1.1
+"""
+
+
+"scallop" version information:
+"""
+v0.10.5
+"""
+
+Does not contain indication of the required version:
+"""
+v0.10.4
+"""
+
+
+"portcullis" version information:
+"""
+portcullis 1.2.4
+"""
+
+Does not contain indication of the required version:
+"""
+portcullis 1.2.0
+"""
+
+
+"junctools" version information:
+"""
+1.2.4
+"""
+
+Does not contain indication of the required version:
+"""
+1.2.0
+"""
+
+
