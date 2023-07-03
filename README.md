@@ -12,3 +12,8 @@ If we used any publicly available sequence for an analysis, we gathered them fro
 
 To save space, we just put a file containing the name of files (organisms) which were used for each genome re-annotation step.
 All RNAseq reads have been uploaded to NCBI SRA and can be accessed under Bioproject PRJNA832564 and SRA accessions SRR18936040 to SRR18936170.
+
+### Improvements that has happened during the review process
+The files (codes and results) that we gathered while we were compiling the response letters to the reviewers' concerns and improving the manuscript are available here:
+https://doi.org/10.5281/zenodo.8109118
+The files are too big to be published in GitHub without a paid plan.
